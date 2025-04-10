@@ -69,6 +69,21 @@ def get_data():
     return df
 
 
+def get_data_for_display():
+    """Get all data from the database with the internal ID hidden"""
+    conn = sqlite3.connect('robocastin.db')
+    query = "SELECT * FROM experiments"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    # Store the ID separately for reference but hide from display
+    display_df = df.copy()
+    if 'id' in display_df.columns:
+        display_df = display_df.drop('id', axis=1)
+
+    return df, display_df
+
+
 def add_data_point(data_point):
     """Add a new data point to the database"""
     conn = sqlite3.connect('robocastin.db')

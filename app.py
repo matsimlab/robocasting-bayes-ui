@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 
 # Import modules
-from database import init_db, get_data, add_data_point, delete_data_point, delete_multiple_data_points
+from database import init_db, get_data, get_data_for_display, add_data_point, delete_data_point, \
+    delete_multiple_data_points
 from models import train_gpr_models, make_prediction
 from visualization import create_scatter_plot, create_summary_stats
 from utils import add_custom_css, validate_new_data_point
 
 # Set page config
 st.set_page_config(
-    page_title="Robocastin Experiments",
+    page_title="Robocasting Experiments",
     page_icon="🤖",
     layout="wide"
 )
@@ -41,7 +42,7 @@ def store_params_for_form():
 
 
 # App title
-st.title("🤖 Robocastin Experiments")
+st.title("🤖 Robocasting Experiments")
 
 # Add sidebar navigation - use the saved state for the default value
 page = st.sidebar.radio("Navigation", ["Data Explorer", "Predictions", "Add New Data"],
@@ -65,47 +66,53 @@ if 'show_add_data' in st.session_state and st.session_state.show_add_data:
 
 # Display content based on selected tab
 if page == "Data Explorer":
-    st.header("Dataset")
+    # st.header("Dataset")
 
     # Load data
-    data = get_data()
+    full_data, display_data = get_data_for_display()
 
     # Handle data and deletion
-    if not data.empty:
+    if not full_data.empty:
         st.header("Dataset")
 
-        # Display data table
-        st.dataframe(data, use_container_width=True)
+        # Display data table without the ID column
+        st.dataframe(display_data, use_container_width=True)
 
         # Add delete functionality with a more compatible approach
         with st.expander("Delete Data Points"):
             st.warning("⚠️ Select a row to delete. This action cannot be undone.")
 
-            # Simple numeric selector for row ID
+            # Simple numeric selector for row ID - but show more meaningful info
+            id_to_info = {}
+            for idx, row in full_data.iterrows():
+                row_id = row['id']
+                # Create a descriptive label for each row
+                info = f"Row {idx + 1}: Temp={row['temp']}°C, Width={row['width_1']:.2f}mm, Height={row['height_1']:.2f}mm"
+                id_to_info[row_id] = info
+
             selected_id = st.selectbox(
-                "Select row ID to delete:",
-                options=data['id'].tolist(),
-                format_func=lambda
-                    x: f"ID {x}: Temp={data[data['id'] == x]['temp'].values[0]}°C, Width={data[data['id'] == x]['width_1'].values[0]:.2f}mm"
+                "Select row to delete:",
+                options=list(id_to_info.keys()),
+                format_func=lambda x: id_to_info[x]
             )
 
             if st.button("Delete Selected Row", type="primary"):
                 if delete_data_point(selected_id):
-                    st.success(f"Successfully deleted row with ID {selected_id}")
+                    st.success(f"Successfully deleted row")
                     # Clear the prediction if it exists, as the data has changed
                     if 'prediction' in st.session_state:
                         st.session_state.prediction = None
                     # Rerun the app to refresh the data
                     st.rerun()
                 else:
-                    st.error(f"Failed to delete row with ID {selected_id}")
+                    st.error(f"Failed to delete row")
     else:
         st.info("No data available. Add data points to see the dataset.")
 
     # Display data summary
     st.header("Data Summary")
-    if not data.empty:
-        stats = create_summary_stats(data)
+    if not full_data.empty:
+        stats = create_summary_stats(full_data)
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -125,14 +132,14 @@ if page == "Data Explorer":
         with viz_col1:
             # Width vs Temperature scatter plot
             st.plotly_chart(
-                create_scatter_plot(data, "temp", "width_1", "Width vs Temperature"),
+                create_scatter_plot(full_data, "temp", "width_1", "Width vs Temperature"),
                 use_container_width=True
             )
 
         with viz_col2:
             # Height vs Temperature scatter plot
             st.plotly_chart(
-                create_scatter_plot(data, "temp", "height_1", "Height vs Temperature"),
+                create_scatter_plot(full_data, "temp", "height_1", "Height vs Temperature"),
                 use_container_width=True
             )
 
@@ -143,7 +150,7 @@ if page == "Data Explorer":
             # Width vs Extrusion Multiplier
             st.plotly_chart(
                 create_scatter_plot(
-                    data,
+                    full_data,
                     "slicer_extrusion_multiplier",
                     "width_1",
                     "Width vs Extrusion Multiplier"
@@ -155,7 +162,7 @@ if page == "Data Explorer":
             # Height vs Extrusion Multiplier
             st.plotly_chart(
                 create_scatter_plot(
-                    data,
+                    full_data,
                     "slicer_extrusion_multiplier",
                     "height_1",
                     "Height vs Extrusion Multiplier"
@@ -168,7 +175,7 @@ if page == "Data Explorer":
 elif page == "Predictions":
     st.header("Gaussian Process Regression Predictions")
 
-    # Load data
+    # Load data - use the full data with IDs for model training
     data = get_data()
 
     if not data.empty:
@@ -263,7 +270,7 @@ elif page == "Predictions":
                 width_range = (prediction['width'] - prediction['width_uncertainty'],
                                prediction['width'] + prediction['width_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                st.progress((prediction['width'] / 5.0))  # Show a progress bar with relative width
+                # st.progress((prediction['width'] / 5.0))  # Show a progress bar with relative width
                 st.markdown(f"**Range:** {width_range[0]:.2f} mm to {width_range[1]:.2f} mm")
 
             with result_col2:
@@ -274,7 +281,7 @@ elif page == "Predictions":
                 height_range = (prediction['height'] - prediction['height_uncertainty'],
                                 prediction['height'] + prediction['height_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                st.progress((prediction['height'] / 2.0))  # Show a progress bar with relative height
+                # st.progress((prediction['height'] / 2.0))  # Show a progress bar with relative height
                 st.markdown(f"**Range:** {height_range[0]:.2f} mm to {height_range[1]:.2f} mm")
 
             # Display model information
