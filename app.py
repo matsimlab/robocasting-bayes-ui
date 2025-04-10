@@ -7,7 +7,7 @@ from database import init_db, get_data, get_data_for_display, add_data_point, de
 from models import train_gpr_models, make_prediction
 from visualization import create_scatter_plot, create_summary_stats
 from utils import add_custom_css, validate_new_data_point
-from auth import login_page, show_logout_button
+from auth import login_page, show_logout_button, show_user_management
 
 # Set page config
 st.set_page_config(
@@ -62,6 +62,9 @@ st.title("🤖 Robocastin Experiments")
 page = st.sidebar.radio("Navigation", ["Data Explorer", "Predictions", "Add New Data"],
                         index=["Data Explorer", "Predictions", "Add New Data"].index(st.session_state.sidebar_page),
                         key="navigation")
+
+# Add user management to bottom of sidebar
+show_user_management()
 
 # Handle page changes
 if page != st.session_state.sidebar_page:

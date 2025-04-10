@@ -79,18 +79,28 @@ def show_logout_button():
     if st.session_state.authenticated:
         with st.sidebar:
             st.write(f"Logged in as: **{st.session_state.username}**")
-
-            # Show admin panel if user is admin
-            if st.session_state.is_admin:
-                if st.sidebar.expander("Admin Panel", expanded=False):
-                    admin_panel()
-
-            # Change password option
-            if st.sidebar.expander("Change Password", expanded=False):
-                change_password_form()
-
             if st.button("Logout"):
                 logout()
+
+
+def show_user_management():
+    """Display user management after navigation if user is authenticated"""
+    if not st.session_state.authenticated:
+        return
+
+    # Add a separator between app content and user management
+    st.sidebar.markdown("---")
+
+    # User management options
+    with st.sidebar:
+        # Change password option for all users
+        with st.expander("Change Password", expanded=False):
+            change_password_form()
+
+        # Admin panel only for admin users
+        if st.session_state.is_admin:
+            with st.expander("User Management", expanded=False):
+                admin_panel()
 
 
 def admin_panel():
