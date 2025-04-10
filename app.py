@@ -7,10 +7,11 @@ from database import init_db, get_data, get_data_for_display, add_data_point, de
 from models import train_gpr_models, make_prediction
 from visualization import create_scatter_plot, create_summary_stats
 from utils import add_custom_css, validate_new_data_point
+from auth import login_page, show_logout_button
 
 # Set page config
 st.set_page_config(
-    page_title="Robocasting Experiments",
+    page_title="Robocastin Experiments",
     page_icon="🤖",
     layout="wide"
 )
@@ -21,11 +22,24 @@ add_custom_css()
 # Initialize the database
 init_db()
 
-# Initialize session state
+# Initialize session state for app functionality
 if 'prediction' not in st.session_state:
     st.session_state.prediction = None
 if 'sidebar_page' not in st.session_state:
     st.session_state.sidebar_page = "Data Explorer"
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = None
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
+# Show the logout button in the sidebar
+show_logout_button()
+
+# Check authentication
+if not login_page():
+    st.stop()
 
 
 # Function to store prediction parameters for add_data form
@@ -42,7 +56,7 @@ def store_params_for_form():
 
 
 # App title
-st.title("🤖 Robocasting Experiments")
+st.title("🤖 Robocastin Experiments")
 
 # Add sidebar navigation - use the saved state for the default value
 page = st.sidebar.radio("Navigation", ["Data Explorer", "Predictions", "Add New Data"],
@@ -66,7 +80,7 @@ if 'show_add_data' in st.session_state and st.session_state.show_add_data:
 
 # Display content based on selected tab
 if page == "Data Explorer":
-    # st.header("Dataset")
+    st.header("Dataset")
 
     # Load data
     full_data, display_data = get_data_for_display()
@@ -270,7 +284,7 @@ elif page == "Predictions":
                 width_range = (prediction['width'] - prediction['width_uncertainty'],
                                prediction['width'] + prediction['width_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                # st.progress((prediction['width'] / 5.0))  # Show a progress bar with relative width
+                st.progress((prediction['width'] / 5.0))  # Show a progress bar with relative width
                 st.markdown(f"**Range:** {width_range[0]:.2f} mm to {width_range[1]:.2f} mm")
 
             with result_col2:
@@ -281,7 +295,7 @@ elif page == "Predictions":
                 height_range = (prediction['height'] - prediction['height_uncertainty'],
                                 prediction['height'] + prediction['height_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                # st.progress((prediction['height'] / 2.0))  # Show a progress bar with relative height
+                st.progress((prediction['height'] / 2.0))  # Show a progress bar with relative height
                 st.markdown(f"**Range:** {height_range[0]:.2f} mm to {height_range[1]:.2f} mm")
 
             # Display model information
