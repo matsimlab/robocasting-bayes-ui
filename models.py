@@ -158,6 +158,7 @@ def make_prediction(params, models):
     width_pred, width_std = width_model.predict(X, return_std=True)
     height_pred, height_std = height_model.predict(X, return_std=True)
 
+
     return {
         'width': float(width_pred[0]),  # Now predicting average width
         'width_uncertainty': float(width_std[0] * 1.96),  # 95% confidence interval
