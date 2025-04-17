@@ -8,6 +8,7 @@ from models import train_gpr_models, make_prediction
 from visualization import create_scatter_plot, create_summary_stats
 from utils import add_custom_css, validate_new_data_point
 from auth import login_page, show_logout_button, show_user_management
+from next_point import suggest_next_experiment, suggest_design_space_exploration
 
 # Set page config
 st.set_page_config(
@@ -33,6 +34,8 @@ if "username" not in st.session_state:
     st.session_state.username = None
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
+if "next_experiment_point" not in st.session_state:
+    st.session_state.next_experiment_point = None
 
 # Show the logout button in the sidebar
 show_logout_button()
@@ -55,12 +58,10 @@ def store_params_for_form():
     st.session_state.sidebar_page = "Add New Data"
 
 
-# App title
-st.title("🤖 Robocastin Experiments")
-
 # Add sidebar navigation - use the saved state for the default value
-page = st.sidebar.radio("Navigation", ["Data Explorer", "Predictions", "Add New Data"],
-                        index=["Data Explorer", "Predictions", "Add New Data"].index(st.session_state.sidebar_page),
+page = st.sidebar.radio("Navigation", ["Data Explorer", "Predictions", "Next Experiment", "Add New Data"],
+                        index=["Data Explorer", "Predictions", "Next Experiment", "Add New Data"].index(
+                            st.session_state.sidebar_page),
                         key="navigation")
 
 # Add user management to bottom of sidebar
@@ -186,8 +187,6 @@ if page == "Data Explorer":
                 ),
                 use_container_width=True
             )
-    else:
-        st.info("No data available. Add data points to see summary and visualizations.")
 
 elif page == "Predictions":
     st.header("Gaussian Process Regression Predictions")
@@ -372,6 +371,197 @@ elif page == "Predictions":
             transfer_button = st.button("Transfer to Add New Data", on_click=store_params_for_form)
     else:
         st.info("No data available. Add data points to make predictions.")
+
+elif page == "Next Experiment":
+    st.header("Next Experiment Suggestion")
+
+    # Load data
+    data = get_data()
+
+    if not data.empty:
+        # Train models if we haven't already
+        width_model, height_model = train_gpr_models(data)
+
+        # Explanation
+        st.markdown("""
+        This tab uses Bayesian optimization to suggest the next experiment point that will 
+        help minimize the difference between your slicer settings and the actual printed dimensions.
+
+        The algorithm looks for parameter combinations where the predicted height and width 
+        output will most closely match the height and width you specify in your slicer settings.
+        """)
+
+        # Options for suggestion
+        st.subheader("Suggestion Options")
+
+        suggestion_type = st.radio(
+            "Suggestion approach:",
+            ["Optimal Dimension Matching (single point)", "Design Space Exploration (multiple points)"]
+        )
+
+        if suggestion_type == "Optimal Dimension Matching (single point)":
+            # Button to generate suggestion
+            if st.button("Suggest Next Experiment"):
+                with st.spinner("Finding optimal parameters for dimension matching..."):
+                    next_point = suggest_next_experiment(data, (width_model, height_model))
+                    st.session_state.next_experiment_point = next_point
+        else:
+            # Multiple point suggestion
+            num_points = st.slider("Number of suggestions:", min_value=2, max_value=10, value=5)
+
+            if st.button("Generate Suggestions"):
+                with st.spinner(f"Finding {num_points} diverse experiment points..."):
+                    next_points = suggest_design_space_exploration(
+                        data, (width_model, height_model), n_points=num_points
+                    )
+                    st.session_state.next_experiment_points = next_points
+
+        # Display suggestion if available
+        if suggestion_type == "Optimal Dimension Matching (single point)" and st.session_state.next_experiment_point is not None:
+            st.subheader("Suggested Experiment Parameters")
+
+            next_point = st.session_state.next_experiment_point
+
+            # Create columns for parameter display
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Temperature", f"{next_point['temp']:.1f} °C")
+                st.metric("Humidity", f"{next_point['humidity']:.2f}")
+            with col2:
+                st.metric("Layer Height", f"{next_point['slicer_layer_height']:.1f}")
+                st.metric("Layer Width", f"{next_point['slicer_layer_width']:.1f}")
+            with col3:
+                st.metric("Nozzle Speed", f"{next_point['slicer_nozzle_speed']:.1f}")
+                st.metric("Extrusion Multiplier", f"{next_point['slicer_extrusion_multiplier']:.2f}")
+
+            # Display prediction for this point
+            st.subheader("Expected Outcome")
+            pred_col1, pred_col2 = st.columns(2)
+
+            with pred_col1:
+                st.metric("Predicted Width", f"{next_point['predicted_width']:.2f} mm")
+                st.metric("Width Mismatch", f"{next_point['width_mismatch']:.3f} mm")
+
+            with pred_col2:
+                st.metric("Predicted Height", f"{next_point['predicted_height']:.2f} mm")
+                st.metric("Height Mismatch", f"{next_point['height_mismatch']:.3f} mm")
+
+            st.info(f"Total dimension mismatch: {next_point['total_mismatch']:.3f} mm")
+
+            # Add visual comparison of target vs predicted dimensions
+            st.subheader("Dimension Comparison")
+
+            # Calculate percentage match for height and width
+            height_match = 100 * (1 - next_point['height_mismatch'] / next_point['slicer_layer_height'])
+            width_match = 100 * (1 - next_point['width_mismatch'] / next_point['slicer_layer_width'])
+
+            # Ensure percentages are within reasonable bounds
+            height_match = max(0, min(100, height_match))
+            width_match = max(0, min(100, width_match))
+
+            # Display match percentages
+            match_col1, match_col2 = st.columns(2)
+            with match_col1:
+                st.metric("Height Match", f"{height_match:.1f}%")
+                st.text(f"Target: {next_point['slicer_layer_height']:.2f} mm")
+                st.text(f"Expected: {next_point['predicted_height']:.2f} mm")
+                st.progress(height_match / 100)
+
+            with match_col2:
+                st.metric("Width Match", f"{width_match:.1f}%")
+                st.text(f"Target: {next_point['slicer_layer_width']:.2f} mm")
+                st.text(f"Expected: {next_point['predicted_width']:.2f} mm")
+                st.progress(width_match / 100)
+
+            # Add button to use these parameters for a new experiment
+            if st.button("Use These Parameters"):
+                # Store parameters in session state
+                st.session_state.stored_temp = next_point['temp']
+                st.session_state.stored_humidity = next_point['humidity']
+                st.session_state.stored_layer_height = next_point['slicer_layer_height']
+                st.session_state.stored_layer_width = next_point['slicer_layer_width']
+                st.session_state.stored_nozzle_speed = next_point['slicer_nozzle_speed']
+                st.session_state.stored_extrusion_multiplier = next_point['slicer_extrusion_multiplier']
+
+                # Set active tab to "Add New Data"
+                st.session_state.sidebar_page = "Add New Data"
+                st.session_state.show_add_data = True
+                st.rerun()
+
+        elif suggestion_type == "Design Space Exploration (multiple points)" and hasattr(st.session_state,
+                                                                                         'next_experiment_points'):
+            st.subheader("Suggested Experiments")
+
+            # Create tabs for each suggestion
+            suggestion_tabs = st.tabs(
+                [f"Suggestion {i + 1}" for i in range(len(st.session_state.next_experiment_points))])
+
+            for i, (tab, point) in enumerate(zip(suggestion_tabs, st.session_state.next_experiment_points)):
+                with tab:
+                    # Parameters
+                    param_col1, param_col2, param_col3 = st.columns(3)
+                    with param_col1:
+                        st.metric("Temperature", f"{point['temp']:.1f} °C")
+                        st.metric("Humidity", f"{point['humidity']:.2f}")
+                    with param_col2:
+                        st.metric("Layer Height", f"{point['slicer_layer_height']:.1f}")
+                        st.metric("Layer Width", f"{point['slicer_layer_width']:.1f}")
+                    with param_col3:
+                        st.metric("Nozzle Speed", f"{point['slicer_nozzle_speed']:.1f}")
+                        st.metric("Extrusion Multiplier", f"{point['slicer_extrusion_multiplier']:.2f}")
+
+                    # Predictions
+                    st.divider()
+                    pred_col1, pred_col2 = st.columns(2)
+
+                    with pred_col1:
+                        st.metric("Predicted Width", f"{point['predicted_width']:.2f} mm")
+                        st.metric("Width Mismatch", f"{point['width_mismatch']:.3f} mm")
+
+                    with pred_col2:
+                        st.metric("Predicted Height", f"{point['predicted_height']:.2f} mm")
+                        st.metric("Height Mismatch", f"{point['height_mismatch']:.3f} mm")
+
+                    st.info(f"Total dimension mismatch: {point['total_mismatch']:.3f} mm")
+
+                    # Calculate percentage match for height and width
+                    height_match = 100 * (1 - point['height_mismatch'] / point['slicer_layer_height'])
+                    width_match = 100 * (1 - point['width_mismatch'] / point['slicer_layer_width'])
+
+                    # Ensure percentages are within reasonable bounds
+                    height_match = max(0, min(100, height_match))
+                    width_match = max(0, min(100, width_match))
+
+                    # Display match percentages
+                    match_col1, match_col2 = st.columns(2)
+                    with match_col1:
+                        st.metric("Height Match", f"{height_match:.1f}%")
+                        st.text(f"Target: {point['slicer_layer_height']:.2f} mm")
+                        st.text(f"Expected: {point['predicted_height']:.2f} mm")
+                        st.progress(height_match / 100)
+
+                    with match_col2:
+                        st.metric("Width Match", f"{width_match:.1f}%")
+                        st.text(f"Target: {point['slicer_layer_width']:.2f} mm")
+                        st.text(f"Expected: {point['predicted_width']:.2f} mm")
+                        st.progress(width_match / 100)
+
+                    # Use parameters button
+                    if st.button(f"Use Parameters {i + 1}", key=f"use_params_{i}"):
+                        # Store parameters in session state
+                        st.session_state.stored_temp = point['temp']
+                        st.session_state.stored_humidity = point['humidity']
+                        st.session_state.stored_layer_height = point['slicer_layer_height']
+                        st.session_state.stored_layer_width = point['slicer_layer_width']
+                        st.session_state.stored_nozzle_speed = point['slicer_nozzle_speed']
+                        st.session_state.stored_extrusion_multiplier = point['slicer_extrusion_multiplier']
+
+                        # Set active tab to "Add New Data"
+                        st.session_state.sidebar_page = "Add New Data"
+                        st.session_state.show_add_data = True
+                        st.rerun()
+    else:
+        st.info("No data available. Add data points to generate experiment suggestions.")
 
 elif page == "Add New Data":
     st.header("Add New Data Point")
