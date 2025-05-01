@@ -5,16 +5,30 @@ from datetime import datetime, timedelta
 import streamlit as st
 import os
 
-# Database file
-AUTH_DB = "/app/data/robocasting_auth.db"
+# Helper function to determine the database path
+def get_auth_db_path():
+    """Helper function to determine the database path"""
+    if os.path.exists('/app'):
+        # Docker environment
+        db_dir = '/app/data'
+        os.makedirs(db_dir, exist_ok=True)
+        return os.path.join(db_dir, 'robocasting_auth.db')
+    else:
+        # Local development environment
+        db_dir = 'data'
+        os.makedirs(db_dir, exist_ok=True)
+        return os.path.join(db_dir, 'robocasting_auth.db')
 
 
 def init_auth_db():
     """Initialize the authentication database and create tables if they don't exist"""
-    # Create data directory if it doesn't exist
-    os.makedirs('/app/data', exist_ok=True)
+    # Get database path
+    auth_db = get_auth_db_path()
+    
+    # Create the database directory if needed
+    os.makedirs(os.path.dirname(auth_db), exist_ok=True)
 
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(auth_db)
     c = conn.cursor()
 
     # Create users table
@@ -57,7 +71,7 @@ def create_user(username, password, is_admin=False):
     if user_exists(username):
         return False
 
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute('''
@@ -72,7 +86,7 @@ def create_user(username, password, is_admin=False):
 
 def user_exists(username):
     """Check if a user exists in the database"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute("SELECT COUNT(*) FROM users WHERE username = ?", (username,))
@@ -84,7 +98,7 @@ def user_exists(username):
 
 def verify_user(username, password):
     """Verify a user's credentials"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
@@ -101,7 +115,7 @@ def verify_user(username, password):
 
 def is_admin(username):
     """Check if a user is an admin"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute("SELECT is_admin FROM users WHERE username = ?", (username,))
@@ -129,7 +143,7 @@ def get_client_ip():
 
 def is_ip_blocked(ip, max_attempts=3, block_duration=10):
     """Check if an IP is currently blocked"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute("SELECT failed_attempts, last_attempt FROM login_attempts WHERE ip_address = ?", (ip,))
@@ -164,7 +178,7 @@ def is_ip_blocked(ip, max_attempts=3, block_duration=10):
 
 def record_failed_attempt(ip, max_attempts=3, block_duration=10):
     """Record a failed login attempt for an IP"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     # Check if IP exists in the database
@@ -206,7 +220,7 @@ def record_failed_attempt(ip, max_attempts=3, block_duration=10):
 
 def reset_attempts(ip):
     """Reset the failed attempts for an IP after successful login"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute('''
@@ -221,7 +235,7 @@ def reset_attempts(ip):
 
 def list_users():
     """List all users in the database"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute("SELECT username, is_admin, created_at FROM users")
@@ -237,7 +251,7 @@ def delete_user(username):
     if username == "admin":
         return False  # Don't allow deleting the main admin
 
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute("DELETE FROM users WHERE username = ?", (username,))
@@ -251,7 +265,7 @@ def delete_user(username):
 
 def change_password(username, new_password):
     """Change a user's password"""
-    conn = sqlite3.connect(AUTH_DB)
+    conn = sqlite3.connect(get_auth_db_path())
     c = conn.cursor()
 
     c.execute('''

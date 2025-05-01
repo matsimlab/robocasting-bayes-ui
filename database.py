@@ -7,9 +7,25 @@ import streamlit as st
 def init_db():
     """Initialize the SQLite database and create table if it doesn't exist"""
     # Create data directory if it doesn't exist
-    os.makedirs('/app/data', exist_ok=True)
-
-    conn = sqlite3.connect('/app/data/robocasting.db')
+    # Check if we're running in Docker or locally
+    import os
+    
+    # Determine the database path - use local path for development
+    if os.path.exists('/app'):
+        # Docker environment
+        db_dir = '/app/data'
+        os.makedirs(db_dir, exist_ok=True)
+        db_path = os.path.join(db_dir, 'robocasting.db')
+    else:
+        # Local development environment
+        db_dir = 'data'
+        os.makedirs(db_dir, exist_ok=True)
+        db_path = os.path.join(db_dir, 'robocasting.db')
+        
+    # Log the database path for debugging
+    print(f"Using database at: {db_path}")
+        
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
 
     # Create table
@@ -63,9 +79,25 @@ def init_db():
     conn.close()
 
 
+def get_db_path():
+    """Helper function to determine the database path"""
+    import os
+    
+    if os.path.exists('/app'):
+        # Docker environment
+        db_dir = '/app/data'
+        os.makedirs(db_dir, exist_ok=True)
+        return os.path.join(db_dir, 'robocasting.db')
+    else:
+        # Local development environment
+        db_dir = 'data'
+        os.makedirs(db_dir, exist_ok=True)
+        return os.path.join(db_dir, 'robocasting.db')
+
+
 def get_data():
     """Get all data from the database"""
-    conn = sqlite3.connect('/app/data/robocasting.db')
+    conn = sqlite3.connect(get_db_path())
     query = "SELECT * FROM experiments"
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -74,7 +106,7 @@ def get_data():
 
 def get_data_for_display():
     """Get all data from the database with the internal ID hidden"""
-    conn = sqlite3.connect('/app/data/robocasting.db')
+    conn = sqlite3.connect(get_db_path())
     query = "SELECT * FROM experiments"
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -89,7 +121,7 @@ def get_data_for_display():
 
 def add_data_point(data_point):
     """Add a new data point to the database"""
-    conn = sqlite3.connect('/app/data/robocasting.db')
+    conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
 
     c.execute('''
@@ -114,7 +146,7 @@ def add_data_point(data_point):
 
 def delete_data_point(id):
     """Delete a data point from the database by ID"""
-    conn = sqlite3.connect('/app/data/robocasting.db')
+    conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
 
     c.execute("DELETE FROM experiments WHERE id = ?", (id,))
@@ -133,7 +165,7 @@ def delete_multiple_data_points(ids):
     if not ids:
         return 0
 
-    conn = sqlite3.connect('/app/data/robocasting.db')
+    conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
 
     # Create placeholders for the SQL query
