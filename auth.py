@@ -18,7 +18,7 @@ def login_page():
         st.session_state.is_admin = False
 
     if not st.session_state.authenticated:
-        st.title("🔒 Robocastin Login")
+        st.title("🔒 Robocasting Login")
 
         # Get the client's IP
         client_ip = get_client_ip()
@@ -32,7 +32,7 @@ def login_page():
 
         if first_time:
             st.warning(
-                "First-time setup: Default credentials created (admin/robocastin). Please change them after logging in!")
+                "First-time setup: Default credentials created (admin/robocasting). Please change them after logging in!")
 
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")

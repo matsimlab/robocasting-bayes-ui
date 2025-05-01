@@ -1,5 +1,25 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+
+# Fix for NumPy np.int deprecation in skopt
+# Monkey patch the skopt.space.transformers module
+try:
+    import skopt.space.transformers as transformers
+    # Save the original inverse_transform method
+    original_inverse_transform = transformers.LabelEncoder.inverse_transform
+    
+    def patched_inverse_transform(self, X):
+        """Patched version that uses np.int64 instead of np.int"""
+        X_orig = original_inverse_transform(self, X)
+        return np.round(X_orig).astype(np.int64)  # Use np.int64 instead of np.int
+    
+    # Apply the monkey patch
+    transformers.LabelEncoder.inverse_transform = patched_inverse_transform
+    st.success("✅ Applied NumPy compatibility patch for skopt")
+except Exception as e:
+    st.warning(f"⚠️ Could not apply NumPy compatibility patch: {e}")
+
 
 # Import modules
 from database import init_db, get_data, get_data_for_display, add_data_point, delete_data_point, \
@@ -12,7 +32,7 @@ from next_point import suggest_next_experiment, suggest_design_space_exploration
 
 # Set page config
 st.set_page_config(
-    page_title="Robocastin Experiments",
+    page_title="Robocasting Experiments",
     page_icon="🤖",
     layout="wide"
 )

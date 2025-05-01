@@ -1,0 +1,16 @@
+# Virtual environments
+venv/
+ENV/
+.env
+.venv/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local development specific files
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints

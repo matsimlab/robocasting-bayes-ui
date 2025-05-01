@@ -8,6 +8,27 @@ from skopt.space import Real, Categorical
 from skopt.callbacks import VerboseCallback
 import time
 
+# Additional NumPy deprecation patch for direct skopt calls
+# This is a belt-and-suspenders approach to ensure compatibility
+try:
+    import skopt.space.transformers as transformers
+    if not hasattr(transformers, '_patched_for_numpy'):
+        # Save the original method if not already patched
+        if not hasattr(transformers, '_original_inverse_transform'):
+            transformers._original_inverse_transform = transformers.LabelEncoder.inverse_transform
+        
+        def safe_inverse_transform(self, X):
+            """Safely use int64 instead of deprecated np.int"""
+            X_orig = transformers._original_inverse_transform(self, X)
+            return np.round(X_orig).astype(np.int64)  # Use explicit np.int64
+        
+        # Apply the patch
+        transformers.LabelEncoder.inverse_transform = safe_inverse_transform
+        transformers._patched_for_numpy = True
+except Exception:
+    # Silently continue if patching fails - we already have a message in app.py
+    pass
+
 
 @st.cache_resource
 def train_gpr_models(data):

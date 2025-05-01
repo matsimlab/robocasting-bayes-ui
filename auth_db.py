@@ -6,11 +6,14 @@ import streamlit as st
 import os
 
 # Database file
-AUTH_DB = "robocastin_auth.db"
+AUTH_DB = "/app/data/robocasting_auth.db"
 
 
 def init_auth_db():
     """Initialize the authentication database and create tables if they don't exist"""
+    # Create data directory if it doesn't exist
+    os.makedirs('/app/data', exist_ok=True)
+
     conn = sqlite3.connect(AUTH_DB)
     c = conn.cursor()
 
@@ -38,7 +41,7 @@ def init_auth_db():
 
     # Initialize default admin if no users exist
     if not user_exists("admin"):
-        create_user("admin", "robocastin", is_admin=True)
+        create_user("admin", "robocasting", is_admin=True)
         return True
 
     return False

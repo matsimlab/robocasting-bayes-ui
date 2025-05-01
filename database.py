@@ -6,7 +6,10 @@ import streamlit as st
 
 def init_db():
     """Initialize the SQLite database and create table if it doesn't exist"""
-    conn = sqlite3.connect('robocastin.db')
+    # Create data directory if it doesn't exist
+    os.makedirs('/app/data', exist_ok=True)
+
+    conn = sqlite3.connect('/app/data/robocasting.db')
     c = conn.cursor()
 
     # Create table
@@ -62,7 +65,7 @@ def init_db():
 
 def get_data():
     """Get all data from the database"""
-    conn = sqlite3.connect('robocastin.db')
+    conn = sqlite3.connect('/app/data/robocasting.db')
     query = "SELECT * FROM experiments"
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -71,7 +74,7 @@ def get_data():
 
 def get_data_for_display():
     """Get all data from the database with the internal ID hidden"""
-    conn = sqlite3.connect('robocastin.db')
+    conn = sqlite3.connect('/app/data/robocasting.db')
     query = "SELECT * FROM experiments"
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -86,7 +89,7 @@ def get_data_for_display():
 
 def add_data_point(data_point):
     """Add a new data point to the database"""
-    conn = sqlite3.connect('robocastin.db')
+    conn = sqlite3.connect('/app/data/robocasting.db')
     c = conn.cursor()
 
     c.execute('''
@@ -111,7 +114,7 @@ def add_data_point(data_point):
 
 def delete_data_point(id):
     """Delete a data point from the database by ID"""
-    conn = sqlite3.connect('robocastin.db')
+    conn = sqlite3.connect('/app/data/robocasting.db')
     c = conn.cursor()
 
     c.execute("DELETE FROM experiments WHERE id = ?", (id,))
@@ -130,7 +133,7 @@ def delete_multiple_data_points(ids):
     if not ids:
         return 0
 
-    conn = sqlite3.connect('robocastin.db')
+    conn = sqlite3.connect('/app/data/robocasting.db')
     c = conn.cursor()
 
     # Create placeholders for the SQL query

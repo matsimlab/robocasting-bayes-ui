@@ -1,0 +1,62 @@
+# Version control
+.git
+.gitignore
+.github/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+.env
+.venv/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local development specific files
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints
+
+# Docker specific
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-run.sh
+docker-stop.sh
+
+# Data files that should be mounted as volumes
+robocasting.db
+robocasting_auth.db
+
+# Documentation
+README.md
+Docker-README.md
+LICENSE
+
+# Logs
+*.log
