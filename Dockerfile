@@ -7,8 +7,6 @@ COPY requirements.txt .
 
 # Install dependencies and curl (for healthcheck)
 RUN pip install --no-cache-dir -r requirements.txt && \
-    # Ensure compatibility by pinning NumPy version
-    pip install --no-cache-dir "numpy==1.20.3" && \
     apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     apt-get clean && \
