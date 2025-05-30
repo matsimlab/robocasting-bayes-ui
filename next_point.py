@@ -4,9 +4,11 @@ from skopt.space import Real, Integer
 from skopt.utils import cook_estimator
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
+from database import add_suggested_experiment
 
 
-def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_points=None, diversity_weight=0.0):
+def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_points=None, diversity_weight=0.0, 
+                           store_suggestion=True, suggestion_type="single_point"):
     """
     Suggest the next experiment point using Bayesian optimization to minimize
     the difference between slicer dimensions and actual printed dimensions.
@@ -179,6 +181,11 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
         'width_mismatch': float(width_mismatch),
         'total_mismatch': float(total_mismatch)
     })
+    
+    # Store suggestion in the database with dataset size if requested
+    if store_suggestion:
+        dataset_size = len(data)
+        add_suggested_experiment(suggested_point, dataset_size, suggestion_type)
 
     return suggested_point
 
@@ -231,7 +238,9 @@ def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_ca
             bounds,
             n_calls=n_calls,
             previous_points=suggested_points,
-            diversity_weight=diversity_weight
+            diversity_weight=diversity_weight,
+            store_suggestion=True,  # Store each point
+            suggestion_type="design_space_exploration"  # Properly label them
         )
 
         suggested_points.append(next_point)

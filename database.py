@@ -28,7 +28,7 @@ def init_db():
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
 
-    # Create table
+    # Create experiments table
     c.execute('''
     CREATE TABLE IF NOT EXISTS experiments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +44,29 @@ def init_db():
         slicer_layer_width REAL,
         slicer_nozzle_speed REAL,
         slicer_extrusion_multiplier REAL
+    )
+    ''')
+    
+    # Create suggested_experiments table to track Bayesian optimization suggestions
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS suggested_experiments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dataset_size INTEGER,
+        suggestion_type TEXT,
+        temp REAL,
+        humidity REAL,
+        slicer_layer_height REAL,
+        slicer_layer_width REAL,
+        slicer_nozzle_speed REAL,
+        slicer_extrusion_multiplier REAL,
+        predicted_width REAL,
+        predicted_height REAL,
+        width_uncertainty REAL,
+        height_uncertainty REAL,
+        width_mismatch REAL,
+        height_mismatch REAL,
+        total_mismatch REAL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
@@ -179,3 +202,84 @@ def delete_multiple_data_points(ids):
     conn.close()
 
     return rows_deleted
+
+
+def add_suggested_experiment(suggestion_data, dataset_size, suggestion_type="single_point"):
+    """Add a suggested experiment from Bayesian optimization to the database
+    
+    Args:
+        suggestion_data: Dictionary containing the suggested parameters and predictions
+        dataset_size: Size of the dataset when the suggestion was made
+        suggestion_type: Type of suggestion ('single_point' or 'design_space_exploration')
+    
+    Returns:
+        ID of the newly inserted record
+    """
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    
+    c.execute('''
+    INSERT INTO suggested_experiments (
+        dataset_size,
+        suggestion_type,
+        temp,
+        humidity,
+        slicer_layer_height,
+        slicer_layer_width,
+        slicer_nozzle_speed,
+        slicer_extrusion_multiplier,
+        predicted_width,
+        predicted_height,
+        width_uncertainty,
+        height_uncertainty,
+        width_mismatch,
+        height_mismatch,
+        total_mismatch
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        dataset_size,
+        suggestion_type,
+        suggestion_data['temp'],
+        suggestion_data['humidity'],
+        suggestion_data['slicer_layer_height'],
+        suggestion_data['slicer_layer_width'],
+        suggestion_data['slicer_nozzle_speed'],
+        suggestion_data['slicer_extrusion_multiplier'],
+        suggestion_data['predicted_width'],
+        suggestion_data['predicted_height'],
+        suggestion_data.get('width_uncertainty', 0.0),
+        suggestion_data.get('height_uncertainty', 0.0),
+        suggestion_data['width_mismatch'],
+        suggestion_data['height_mismatch'],
+        suggestion_data['total_mismatch']
+    ))
+    
+    # Get the ID of the newly inserted row
+    last_id = c.lastrowid
+    
+    conn.commit()
+    conn.close()
+    
+    return last_id
+
+
+def get_suggested_experiments(limit=None):
+    """Get suggested experiments from the database with optional limit
+    
+    Args:
+        limit: Optional maximum number of records to return
+    
+    Returns:
+        DataFrame containing suggested experiments
+    """
+    conn = sqlite3.connect(get_db_path())
+    
+    if limit:
+        query = f"SELECT * FROM suggested_experiments ORDER BY timestamp DESC LIMIT {limit}"
+    else:
+        query = "SELECT * FROM suggested_experiments ORDER BY timestamp DESC"
+    
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    return df

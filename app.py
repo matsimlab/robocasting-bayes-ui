@@ -11,7 +11,7 @@ st.set_page_config(
 
 # Import modules
 from database import init_db, get_data, get_data_for_display, add_data_point, delete_data_point, \
-    delete_multiple_data_points
+    delete_multiple_data_points, get_suggested_experiments
 from models import train_gpr_models, make_prediction
 from visualization import create_scatter_plot, create_summary_stats
 from utils import add_custom_css, validate_new_data_point
@@ -60,9 +60,10 @@ def store_params_for_form():
 
 
 # Add sidebar navigation - use the saved state for the default value
-page = st.sidebar.radio("Navigation", ["Data Explorer", "Predictions", "Next Experiment", "Add New Data"],
-                        index=["Data Explorer", "Predictions", "Next Experiment", "Add New Data"].index(
-                            st.session_state.sidebar_page),
+page = st.sidebar.radio("Navigation", ["Data Explorer", "Predictions", "Next Experiment", "Add New Data", "Optimization History"],
+                        index=["Data Explorer", "Predictions", "Next Experiment", "Add New Data", "Optimization History"].index(
+                            st.session_state.sidebar_page) if st.session_state.sidebar_page in 
+                            ["Data Explorer", "Predictions", "Next Experiment", "Add New Data", "Optimization History"] else 0,
                         key="navigation")
 
 # Add user management to bottom of sidebar
@@ -404,7 +405,9 @@ elif page == "Next Experiment":
             # Button to generate suggestion
             if st.button("Suggest Next Experiment"):
                 with st.spinner("Finding optimal parameters for dimension matching..."):
-                    next_point = suggest_next_experiment(data, (width_model, height_model))
+                    next_point = suggest_next_experiment(data, (width_model, height_model), 
+                                                        store_suggestion=True, 
+                                                        suggestion_type="single_point")
                     st.session_state.next_experiment_point = next_point
         else:
             # Multiple point suggestion
@@ -656,3 +659,102 @@ elif page == "Add New Data":
 
                 # Refresh data display
                 st.rerun()
+        
+elif page == "Optimization History":
+    st.header("Bayesian Optimization History")
+    
+    # Get suggested experiments from the database
+    suggested_df = get_suggested_experiments()
+    
+    if not suggested_df.empty:
+        # Display summary statistics
+        st.subheader("Summary Statistics")
+        
+        # Group by dataset size to see how suggestions improved over time
+        grouped = suggested_df.groupby('dataset_size').agg({
+            'total_mismatch': ['mean', 'min', 'std'],
+            'id': 'count'
+        }).reset_index()
+        grouped.columns = ['dataset_size', 'avg_mismatch', 'min_mismatch', 'std_mismatch', 'suggestion_count']
+        
+        # Display the summary table
+        st.dataframe(grouped)
+        
+        # Visualization of how total_mismatch improves with dataset size
+        st.subheader("Optimization Progress")
+        
+        import plotly.express as px
+        
+        # Create scatter plot of total mismatch vs dataset size
+        fig1 = px.scatter(
+            suggested_df, 
+            x='dataset_size', 
+            y='total_mismatch', 
+            color='suggestion_type',
+            title='Dimension Mismatch vs Dataset Size',
+            labels={
+                'total_mismatch': 'Total Dimension Mismatch (mm)',
+                'dataset_size': 'Dataset Size',
+                'suggestion_type': 'Suggestion Type'
+            },
+            opacity=0.7
+        )
+        
+        fig1.update_traces(marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey')))
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Create box plot to compare the two suggestion types
+        fig2 = px.box(
+            suggested_df, 
+            x='suggestion_type', 
+            y='total_mismatch',
+            title='Mismatch Distribution by Suggestion Type',
+            labels={
+                'total_mismatch': 'Total Dimension Mismatch (mm)',
+                'suggestion_type': 'Suggestion Type'
+            }
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        # Display raw data with filters
+        st.subheader("Suggested Experiments Data")
+        
+        # Add filters
+        col1, col2 = st.columns(2)
+        with col1:
+            dataset_sizes = sorted(suggested_df['dataset_size'].unique())
+            selected_size = st.selectbox(
+                "Filter by Dataset Size", 
+                options=["All"] + dataset_sizes,
+                index=0
+            )
+        
+        with col2:
+            suggestion_types = sorted(suggested_df['suggestion_type'].unique())
+            selected_type = st.selectbox(
+                "Filter by Suggestion Type", 
+                options=["All"] + suggestion_types,
+                index=0
+            )
+        
+        # Apply filters
+        filtered_df = suggested_df.copy()
+        if selected_size != "All":
+            filtered_df = filtered_df[filtered_df['dataset_size'] == selected_size]
+        
+        if selected_type != "All":
+            filtered_df = filtered_df[filtered_df['suggestion_type'] == selected_type]
+        
+        # Display the filtered data
+        st.dataframe(filtered_df)
+        
+        # Allow export to CSV
+        csv = filtered_df.to_csv(index=False)
+        st.download_button(
+            label="Download Data as CSV",
+            data=csv,
+            file_name="optimization_history.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("No optimization history available yet. Generate some experiment suggestions to see data here.")
