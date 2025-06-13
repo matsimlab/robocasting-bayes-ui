@@ -34,18 +34,55 @@ except Exception:
 def train_gpr_models(data):
     """Train GPR models for width and height prediction with Bayesian hyperparameter optimization"""
     if data.empty:
+        st.error("No data available for training")
         return None, None
 
-    # Make sure we use data without the ID column for training
-    if 'id' in data.columns:
-        data = data.drop('id', axis=1)
+    st.info(f"Starting training with {len(data)} rows")
+    
+    # Make sure we use data without the metadata columns for training
+    metadata_columns = ['id', 'suggestion_id']  # These are for tracking, not features
+    data_for_training = data.drop(columns=[col for col in metadata_columns if col in data.columns])
+    
+    st.info(f"After dropping metadata columns: {len(data_for_training)} rows")
+    
+    # Handle missing layer_count values by setting them to 1 (default)
+    if 'layer_count' in data_for_training.columns:
+        null_layer_count = data_for_training['layer_count'].isnull().sum()
+        if null_layer_count > 0:
+            st.info(f"Found {null_layer_count} NULL layer_count values, setting to 1")
+            data_for_training['layer_count'] = data_for_training['layer_count'].fillna(1)
+    else:
+        # If layer_count column doesn't exist, add it with default value
+        st.info("layer_count column missing, adding with default value 1")
+        data_for_training['layer_count'] = 1
+    
+    # Check for NaN values in each column before dropping (excluding metadata columns)
+    nan_summary = data_for_training.isnull().sum()
+    total_nans = nan_summary.sum()
+    if total_nans > 0:
+        st.warning(f"Found NaN values in training data:\n{nan_summary[nan_summary > 0]}")
+    
+    # Drop any rows with remaining NaN values in the training features
+    data_before_drop = len(data_for_training)
+    data_for_training = data_for_training.dropna()
+    data_after_drop = len(data_for_training)
+    
+    if data_after_drop < data_before_drop:
+        st.info(f"Dropped {data_before_drop - data_after_drop} rows with NaN values in training features")
+    
+    if data_for_training.empty:
+        st.error("No valid data remaining after cleaning. Please check your data for missing values.")
+        return None, None
+
+    # Use the cleaned data for training
+    data = data_for_training
 
     # Calculate average height and width
     data['avg_height'] = (data['height_1'] + data['height_2'] + data['height_3']) / 3
     data['avg_width'] = (data['width_1'] + data['width_2'] + data['width_3']) / 3
 
     # Features (input parameters)
-    X = data[['temp', 'humidity', 'slicer_layer_height',
+    X = data[['temp', 'humidity', 'layer_count', 'slicer_layer_height',
               'slicer_layer_width', 'slicer_nozzle_speed',
               'slicer_extrusion_multiplier']].values
 
@@ -165,10 +202,15 @@ def make_prediction(params, models):
     """Make width and height predictions with uncertainty"""
     width_model, height_model = models
 
+    # Ensure layer_count is present in params
+    if 'layer_count' not in params:
+        params['layer_count'] = 1  # Default value
+
     # Format input for model
     X = np.array([[
         params['temp'],
         params['humidity'],
+        params['layer_count'],
         params['slicer_layer_height'],
         params['slicer_layer_width'],
         params['slicer_nozzle_speed'],

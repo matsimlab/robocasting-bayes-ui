@@ -40,6 +40,7 @@ def init_db():
         width_3 REAL,
         temp REAL,
         humidity REAL,
+        layer_count INTEGER,
         slicer_layer_height REAL,
         slicer_layer_width REAL,
         slicer_nozzle_speed REAL,
@@ -58,6 +59,36 @@ def init_db():
         # Column already exists or other error - that's fine
         pass
     
+    # Add layer_count column if it doesn't exist (for existing databases)
+    try:
+        c.execute('ALTER TABLE experiments ADD COLUMN layer_count INTEGER')
+        conn.commit()
+        print("Added layer_count column to experiments table")
+        
+        # Set default layer_count = 1 for existing records that don't have it
+        c.execute('UPDATE experiments SET layer_count = 1 WHERE layer_count IS NULL')
+        conn.commit()
+        print("Set default layer_count = 1 for existing records")
+        
+    except sqlite3.OperationalError:
+        # Column already exists or other error - still try to update NULL values
+        try:
+            c.execute('UPDATE experiments SET layer_count = 1 WHERE layer_count IS NULL')
+            if c.rowcount > 0:
+                conn.commit()
+                print(f"Updated {c.rowcount} records with default layer_count = 1")
+        except:
+            pass
+    
+    # Add layer_count column to suggested_experiments if it doesn't exist
+    try:
+        c.execute('ALTER TABLE suggested_experiments ADD COLUMN layer_count INTEGER')
+        conn.commit()
+        print("Added layer_count column to suggested_experiments table")
+    except sqlite3.OperationalError:
+        # Column already exists or other error - that's fine
+        pass
+    
     # Create suggested_experiments table to track Bayesian optimization suggestions
     c.execute('''
     CREATE TABLE IF NOT EXISTS suggested_experiments (
@@ -66,6 +97,7 @@ def init_db():
         suggestion_type TEXT,
         temp REAL,
         humidity REAL,
+        layer_count INTEGER,
         slicer_layer_height REAL,
         slicer_layer_width REAL,
         slicer_nozzle_speed REAL,
@@ -81,33 +113,59 @@ def init_db():
     )
     ''')
 
-    # Check if table is empty
+    # Check if table is empty or if we need to reimport due to layer_count
     c.execute("SELECT COUNT(*) FROM experiments")
     count = c.fetchone()[0]
+    
+    # Check if we have layer_count data
+    has_layer_count_data = False
+    if count > 0:
+        try:
+            c.execute("SELECT COUNT(*) FROM experiments WHERE layer_count IS NOT NULL")
+            layer_count_records = c.fetchone()[0]
+            has_layer_count_data = layer_count_records > 0
+        except:
+            has_layer_count_data = False
+    
+    print(f"Database status: {count} total records, layer_count data: {has_layer_count_data}")
 
-    # If table is empty, import data from CSV
-    if count == 0 and os.path.exists('cleaned_df.csv'):
+    # If table is empty or missing layer_count data, import data from CSV
+    if (count == 0 or not has_layer_count_data) and os.path.exists('cleaned_df.csv'):
+        print("Importing/updating data from CSV...")
+        
+        # If we're updating existing data, clear the table first
+        if count > 0 and not has_layer_count_data:
+            print("Clearing existing data to reimport with layer_count")
+            c.execute("DELETE FROM experiments")
+            conn.commit()
+        
         df = pd.read_csv('cleaned_df.csv')
+        print(f"CSV contains {len(df)} records with columns: {list(df.columns)}")
 
+        # Verify CSV has layer_count column
+        if 'layer_count' not in df.columns:
+            print("WARNING: CSV does not contain layer_count column!")
+            df['layer_count'] = 1  # Add default value
+        
         # Insert data into SQLite
         for _, row in df.iterrows():
             c.execute('''
             INSERT INTO experiments (
                 height_1, height_2, height_3,
                 width_1, width_2, width_3,
-                temp, humidity,
+                temp, humidity, layer_count,
                 slicer_layer_height, slicer_layer_width,
                 slicer_nozzle_speed, slicer_extrusion_multiplier
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 row['height_1'], row['height_2'], row['height_3'],
                 row['width_1'], row['width_2'], row['width_3'],
-                row['temp'], row['humidity'],
+                row['temp'], row['humidity'], row['layer_count'],
                 row['slicer_layer_height'], row['slicer_layer_width'],
                 row['slicer_nozzle_speed'], row['slicer_extrusion_multiplier']
             ))
 
-        st.success(f"Imported {len(df)} records from CSV to database.")
+        print(f"Successfully imported {len(df)} records from CSV to database.")
 
     conn.commit()
     conn.close()
@@ -162,15 +220,15 @@ def add_data_point(data_point):
     INSERT INTO experiments (
         height_1, height_2, height_3,
         width_1, width_2, width_3,
-        temp, humidity,
+        temp, humidity, layer_count,
         slicer_layer_height, slicer_layer_width,
         slicer_nozzle_speed, slicer_extrusion_multiplier,
         suggestion_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data_point['height_1'], data_point['height_2'], data_point['height_3'],
         data_point['width_1'], data_point['width_2'], data_point['width_3'],
-        data_point['temp'], data_point['humidity'],
+        data_point['temp'], data_point['humidity'], data_point['layer_count'],
         data_point['slicer_layer_height'], data_point['slicer_layer_width'],
         data_point['slicer_nozzle_speed'], data_point['slicer_extrusion_multiplier'],
         data_point.get('suggestion_id', None)
@@ -237,6 +295,7 @@ def add_suggested_experiment(suggestion_data, dataset_size, suggestion_type="sin
         suggestion_type,
         temp,
         humidity,
+        layer_count,
         slicer_layer_height,
         slicer_layer_width,
         slicer_nozzle_speed,
@@ -248,12 +307,13 @@ def add_suggested_experiment(suggestion_data, dataset_size, suggestion_type="sin
         width_mismatch,
         height_mismatch,
         total_mismatch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         dataset_size,
         suggestion_type,
         suggestion_data['temp'],
         suggestion_data['humidity'],
+        suggestion_data['layer_count'],
         suggestion_data['slicer_layer_height'],
         suggestion_data['slicer_layer_width'],
         suggestion_data['slicer_nozzle_speed'],
@@ -307,7 +367,7 @@ def get_suggested_experiments_for_dropdown():
     conn = sqlite3.connect(get_db_path())
     
     query = '''
-    SELECT id, temp, humidity, slicer_layer_height, slicer_layer_width, 
+    SELECT id, temp, humidity, layer_count, slicer_layer_height, slicer_layer_width, 
            slicer_nozzle_speed, slicer_extrusion_multiplier, 
            predicted_width, predicted_height, total_mismatch, timestamp
     FROM suggested_experiments 
@@ -320,13 +380,14 @@ def get_suggested_experiments_for_dropdown():
     suggestions = {}
     for _, row in df.iterrows():
         # Create a descriptive label for the dropdown
-        label = (f"Suggestion #{row['id']} - T:{row['temp']:.1f}°C, "
+        label = (f"Suggestion #{row['id']} - T:{row['temp']:.1f}°C, LC:{row['layer_count']}, "
                 f"H:{row['slicer_layer_height']:.1f}mm, W:{row['slicer_layer_width']:.1f}mm "
                 f"(Pred: W={row['predicted_width']:.2f}, H={row['predicted_height']:.2f})")
         suggestions[row['id']] = {
             'label': label,
             'temp': row['temp'],
             'humidity': row['humidity'],
+            'layer_count': row['layer_count'],
             'slicer_layer_height': row['slicer_layer_height'],
             'slicer_layer_width': row['slicer_layer_width'],
             'slicer_nozzle_speed': row['slicer_nozzle_speed'],

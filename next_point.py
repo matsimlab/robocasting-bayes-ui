@@ -31,6 +31,7 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
         bounds = {
             'temp': (data['temp'].min(), data['temp'].max()),
             'humidity': (data['humidity'].min(), data['humidity'].max()),
+            'layer_count': (data['layer_count'].min(), data['layer_count'].max()),
             'slicer_layer_height': (data['slicer_layer_height'].min(), data['slicer_layer_height'].max()),
             'slicer_layer_width': (data['slicer_layer_width'].min(), data['slicer_layer_width'].max()),
             'slicer_nozzle_speed': (data['slicer_nozzle_speed'].min(), data['slicer_nozzle_speed'].max()),
@@ -49,6 +50,7 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
     space = [
         Real(bounds['temp'][0], bounds['temp'][1], name='temp'),
         Real(bounds['humidity'][0], bounds['humidity'][1], name='humidity'),
+        Integer(int(bounds['layer_count'][0]), int(bounds['layer_count'][1]), name='layer_count'),
         Real(bounds['slicer_layer_height'][0], bounds['slicer_layer_height'][1], name='slicer_layer_height'),
         Real(bounds['slicer_layer_width'][0], bounds['slicer_layer_width'][1], name='slicer_layer_width'),
         Real(bounds['slicer_nozzle_speed'][0], bounds['slicer_nozzle_speed'][1], name='slicer_nozzle_speed'),
@@ -64,9 +66,9 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
 
         # Normalize parameters based on bounds
         bounds_list = [
-            bounds['temp'], bounds['humidity'], bounds['slicer_layer_height'],
-            bounds['slicer_layer_width'], bounds['slicer_nozzle_speed'],
-            bounds['slicer_extrusion_multiplier']
+            bounds['temp'], bounds['humidity'], bounds['layer_count'],
+            bounds['slicer_layer_height'], bounds['slicer_layer_width'], 
+            bounds['slicer_nozzle_speed'], bounds['slicer_extrusion_multiplier']
         ]
 
         # Convert to normalized space [0,1]
@@ -83,9 +85,9 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
         min_distance = float('inf')
         for point in prev_points:
             point_array = [
-                point['temp'], point['humidity'], point['slicer_layer_height'],
-                point['slicer_layer_width'], point['slicer_nozzle_speed'],
-                point['slicer_extrusion_multiplier']
+                point['temp'], point['humidity'], point['layer_count'],
+                point['slicer_layer_height'], point['slicer_layer_width'],
+                point['slicer_nozzle_speed'], point['slicer_extrusion_multiplier']
             ]
 
             # Convert previous point to normalized space
@@ -111,8 +113,8 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
         X = np.array([params])
 
         # Extract slicer settings for comparison
-        slicer_height = params[2]  # slicer_layer_height
-        slicer_width = params[3]  # slicer_layer_width
+        slicer_height = params[3]  # slicer_layer_height (index shifted due to layer_count)
+        slicer_width = params[4]  # slicer_layer_width (index shifted due to layer_count)
 
         # Get predictions
         width_pred, width_std = width_model.predict(X, return_std=True)
@@ -147,16 +149,18 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
     suggested_point = {
         'temp': result.x[0],
         'humidity': result.x[1],
-        'slicer_layer_height': result.x[2],
-        'slicer_layer_width': result.x[3],
-        'slicer_nozzle_speed': result.x[4],
-        'slicer_extrusion_multiplier': result.x[5]
+        'layer_count': int(result.x[2]),  # Convert to int since it's discrete
+        'slicer_layer_height': result.x[3],
+        'slicer_layer_width': result.x[4],
+        'slicer_nozzle_speed': result.x[5],
+        'slicer_extrusion_multiplier': result.x[6]
     }
 
     # Get the predicted values and uncertainties at this point
     X = np.array([[
         suggested_point['temp'],
         suggested_point['humidity'],
+        suggested_point['layer_count'],
         suggested_point['slicer_layer_height'],
         suggested_point['slicer_layer_width'],
         suggested_point['slicer_nozzle_speed'],
@@ -210,6 +214,7 @@ def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_ca
         bounds = {
             'temp': (data['temp'].min(), data['temp'].max()),
             'humidity': (data['humidity'].min(), data['humidity'].max()),
+            'layer_count': (data['layer_count'].min(), data['layer_count'].max()),
             'slicer_layer_height': (data['slicer_layer_height'].min(), data['slicer_layer_height'].max()),
             'slicer_layer_width': (data['slicer_layer_width'].min(), data['slicer_layer_width'].max()),
             'slicer_nozzle_speed': (data['slicer_nozzle_speed'].min(), data['slicer_nozzle_speed'].max()),

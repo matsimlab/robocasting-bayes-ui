@@ -54,6 +54,7 @@ if not login_page():
 def store_params_for_form():
     st.session_state.stored_temp = st.session_state.temp_input
     st.session_state.stored_humidity = st.session_state.humidity_input
+    st.session_state.stored_layer_count = st.session_state.layer_count_input
     st.session_state.stored_layer_height = st.session_state.layer_height_input
     st.session_state.stored_layer_width = st.session_state.layer_width_input
     st.session_state.stored_nozzle_speed = st.session_state.nozzle_speed_input
@@ -68,6 +69,7 @@ def store_suggestion_params_for_form(suggestion_id):
     next_point = st.session_state.next_experiment_point
     st.session_state.stored_temp = next_point['temp']
     st.session_state.stored_humidity = next_point['humidity']
+    st.session_state.stored_layer_count = next_point['layer_count']
     st.session_state.stored_layer_height = next_point['slicer_layer_height']
     st.session_state.stored_layer_width = next_point['slicer_layer_width']
     st.session_state.stored_nozzle_speed = next_point['slicer_nozzle_speed']
@@ -82,6 +84,7 @@ def store_suggestion_params_for_form(suggestion_id):
 def store_history_suggestion_params_for_form(suggestion_data, suggestion_id):
     st.session_state.stored_temp = suggestion_data['temp']
     st.session_state.stored_humidity = suggestion_data['humidity']
+    st.session_state.stored_layer_count = suggestion_data['layer_count']
     st.session_state.stored_layer_height = suggestion_data['slicer_layer_height']
     st.session_state.stored_layer_width = suggestion_data['slicer_layer_width']
     st.session_state.stored_nozzle_speed = suggestion_data['slicer_nozzle_speed']
@@ -120,6 +123,11 @@ if 'show_add_data' in st.session_state and st.session_state.show_add_data:
 # Display content based on selected tab
 if page == "Data Explorer":
     st.header("Dataset")
+    
+    # Add a button to clear cache and reload data if there are issues
+    if st.button("🔄 Clear Cache & Reload Data", help="Use this if you're experiencing data issues"):
+        st.cache_resource.clear()
+        st.rerun()
 
     # Load data
     full_data, display_data = get_data_for_display()
@@ -225,13 +233,50 @@ if page == "Data Explorer":
 
 elif page == "Predictions":
     st.header("Gaussian Process Regression Predictions")
+    
+    # Add a button to clear cache and reload data if there are issues
+    if st.button("🔄 Clear Model Cache & Reload", help="Use this if you're experiencing model training issues"):
+        st.cache_resource.clear()
+        st.rerun()
 
     # Load data - use the full data with IDs for model training
     data = get_data()
 
     if not data.empty:
-        # Train models
-        width_model, height_model = train_gpr_models(data)
+        st.success(f"Loaded {len(data)} records for training")
+        
+        # Display data summary
+        st.write("**Data Overview:**")
+        st.write(f"- Total records: {len(data)}")
+        st.write(f"- Columns: {list(data.columns)}")
+        
+        # Check for required columns
+        required_cols = ['temp', 'humidity', 'slicer_layer_height', 'slicer_layer_width', 
+                        'slicer_nozzle_speed', 'slicer_extrusion_multiplier',
+                        'height_1', 'height_2', 'height_3', 'width_1', 'width_2', 'width_3']
+        missing_cols = [col for col in required_cols if col not in data.columns]
+        if missing_cols:
+            st.error(f"Missing required columns: {missing_cols}")
+            st.stop()
+        
+        # Check layer_count column
+        if 'layer_count' not in data.columns:
+            st.warning("layer_count column missing, will use default value 1")
+        else:
+            layer_counts = data['layer_count'].value_counts().sort_index()
+            st.write(f"**Layer count distribution:** {dict(layer_counts)}")
+        
+        try:
+            # Train models
+            width_model, height_model = train_gpr_models(data)
+            
+            if width_model is None or height_model is None:
+                st.error("Failed to train models. Please check the data and try clearing the cache.")
+                st.stop()
+        except Exception as e:
+            st.error(f"Error training models: {str(e)}")
+            st.write("Try clearing the cache and reloading the data.")
+            st.stop()
 
         # Prediction form
         st.subheader("Enter Parameters")
@@ -254,6 +299,14 @@ elif page == "Predictions":
                                        step=0.01,
                                        format="%.2f",
                                        key="humidity_input")
+
+            layer_count = st.number_input("Layer Count",
+                                         min_value=int(data['layer_count'].min()),
+                                         max_value=int(data['layer_count'].max()),
+                                         value=int(data['layer_count'].mean()),
+                                         step=1,
+                                         format="%d",
+                                         key="layer_count_input")
 
             slicer_layer_height = st.number_input("Slicer Layer Height",
                                                   min_value=float(data['slicer_layer_height'].min() - 0.1),
@@ -294,6 +347,7 @@ elif page == "Predictions":
         params = {
             'temp': temp,
             'humidity': humidity,
+            'layer_count': layer_count,
             'slicer_layer_height': slicer_layer_height,
             'slicer_layer_width': slicer_layer_width,
             'slicer_nozzle_speed': slicer_nozzle_speed,
@@ -321,7 +375,9 @@ elif page == "Predictions":
                 width_range = (prediction['width'] - prediction['width_uncertainty'],
                                prediction['width'] + prediction['width_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                st.progress((prediction['width'] / 5.0))  # Show a progress bar with relative width
+                # Use a normalized progress bar (clamp to 0-1 range)
+                normalized_width = min(1.0, max(0.0, prediction['width'] / 10.0))  # Normalize to reasonable range
+                st.progress(normalized_width)
                 st.markdown(f"**Range:** {width_range[0]:.2f} mm to {width_range[1]:.2f} mm")
 
             with result_col2:
@@ -332,7 +388,9 @@ elif page == "Predictions":
                 height_range = (prediction['height'] - prediction['height_uncertainty'],
                                 prediction['height'] + prediction['height_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                st.progress((prediction['height'] / 2.0))  # Show a progress bar with relative height
+                # Use a normalized progress bar (clamp to 0-1 range)
+                normalized_height = min(1.0, max(0.0, prediction['height'] / 5.0))  # Normalize to reasonable range
+                st.progress(normalized_height)
                 st.markdown(f"**Range:** {height_range[0]:.2f} mm to {height_range[1]:.2f} mm")
 
             # Display model information
@@ -371,7 +429,9 @@ elif page == "Predictions":
                 width_range = (prediction['width'] - prediction['width_uncertainty'],
                                prediction['width'] + prediction['width_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                st.progress((prediction['width'] / 5.0))  # Show a progress bar with relative width
+                # Use a normalized progress bar (clamp to 0-1 range)
+                normalized_width = min(1.0, max(0.0, prediction['width'] / 10.0))  # Normalize to reasonable range
+                st.progress(normalized_width)
                 st.markdown(f"**Range:** {width_range[0]:.2f} mm to {width_range[1]:.2f} mm")
 
             with result_col2:
@@ -382,7 +442,9 @@ elif page == "Predictions":
                 height_range = (prediction['height'] - prediction['height_uncertainty'],
                                 prediction['height'] + prediction['height_uncertainty'])
                 st.markdown("**95% Confidence Interval:**")
-                st.progress((prediction['height'] / 2.0))  # Show a progress bar with relative height
+                # Use a normalized progress bar (clamp to 0-1 range)
+                normalized_height = min(1.0, max(0.0, prediction['height'] / 5.0))  # Normalize to reasonable range
+                st.progress(normalized_height)
                 st.markdown(f"**Range:** {height_range[0]:.2f} mm to {height_range[1]:.2f} mm")
 
             # Display model information
@@ -465,9 +527,10 @@ elif page == "Next Experiment":
                 st.metric("Temperature", f"{next_point['temp']:.1f} °C")
                 st.metric("Humidity", f"{next_point['humidity']:.2f}")
             with col2:
+                st.metric("Layer Count", f"{next_point['layer_count']}")
                 st.metric("Layer Height", f"{next_point['slicer_layer_height']:.1f}")
-                st.metric("Layer Width", f"{next_point['slicer_layer_width']:.1f}")
             with col3:
+                st.metric("Layer Width", f"{next_point['slicer_layer_width']:.1f}")
                 st.metric("Nozzle Speed", f"{next_point['slicer_nozzle_speed']:.1f}")
                 st.metric("Extrusion Multiplier", f"{next_point['slicer_extrusion_multiplier']:.2f}")
 
@@ -536,9 +599,10 @@ elif page == "Next Experiment":
                         st.metric("Temperature", f"{point['temp']:.1f} °C")
                         st.metric("Humidity", f"{point['humidity']:.2f}")
                     with param_col2:
+                        st.metric("Layer Count", f"{point['layer_count']}")
                         st.metric("Layer Height", f"{point['slicer_layer_height']:.1f}")
-                        st.metric("Layer Width", f"{point['slicer_layer_width']:.1f}")
                     with param_col3:
+                        st.metric("Layer Width", f"{point['slicer_layer_width']:.1f}")
                         st.metric("Nozzle Speed", f"{point['slicer_nozzle_speed']:.1f}")
                         st.metric("Extrusion Multiplier", f"{point['slicer_extrusion_multiplier']:.2f}")
 
@@ -588,6 +652,7 @@ elif page == "Next Experiment":
                             for _, row in suggested_df.iterrows():
                                 if (abs(row['temp'] - point['temp']) < 0.01 and 
                                     abs(row['humidity'] - point['humidity']) < 0.001 and
+                                    abs(row.get('layer_count', 1) - point.get('layer_count', 1)) < 0.1 and
                                     abs(row['slicer_layer_height'] - point['slicer_layer_height']) < 0.01):
                                     suggestion_id = row['id']
                                     break
@@ -607,6 +672,7 @@ elif page == "Add New Data":
     # Use parameters from stored values if available
     default_temp = st.session_state.get('stored_temp', 20.0)
     default_humidity = st.session_state.get('stored_humidity', 0.4)
+    default_layer_count = st.session_state.get('stored_layer_count', 1)
     default_layer_height = st.session_state.get('stored_layer_height', 0.8)
     default_layer_width = st.session_state.get('stored_layer_width', 1.5)
     default_nozzle_speed = st.session_state.get('stored_nozzle_speed', 8.0)
@@ -643,6 +709,7 @@ elif page == "Add New Data":
                 suggestion_data = suggestions[selected_suggestion_id]
                 default_temp = suggestion_data['temp']
                 default_humidity = suggestion_data['humidity']
+                default_layer_count = suggestion_data['layer_count']
                 default_layer_height = suggestion_data['slicer_layer_height']
                 default_layer_width = suggestion_data['slicer_layer_width']
                 default_nozzle_speed = suggestion_data['slicer_nozzle_speed']
@@ -668,6 +735,8 @@ elif page == "Add New Data":
                                        key="form_temp")
             new_humidity = st.number_input("Humidity", min_value=0.0, max_value=1.0, value=default_humidity, step=0.01,
                                            format="%.2f", key="form_humidity")
+            new_layer_count = st.number_input("Layer Count", min_value=1, max_value=10, value=default_layer_count,
+                                             step=1, format="%d", key="form_layer_count")
             new_layer_height = st.number_input("Slicer Layer Height", min_value=0.0, value=default_layer_height,
                                                step=0.1, format="%.1f", key="form_layer_height")
             new_layer_width = st.number_input("Slicer Layer Width", min_value=0.0, value=default_layer_width, step=0.1,
@@ -691,6 +760,7 @@ elif page == "Add New Data":
                 'width_3': width_3,
                 'temp': new_temp,
                 'humidity': new_humidity,
+                'layer_count': new_layer_count,
                 'slicer_layer_height': new_layer_height,
                 'slicer_layer_width': new_layer_width,
                 'slicer_nozzle_speed': new_nozzle_speed,
@@ -713,6 +783,8 @@ elif page == "Add New Data":
                     del st.session_state.stored_temp
                 if 'stored_humidity' in st.session_state:
                     del st.session_state.stored_humidity
+                if 'stored_layer_count' in st.session_state:
+                    del st.session_state.stored_layer_count
                 if 'stored_layer_height' in st.session_state:
                     del st.session_state.stored_layer_height
                 if 'stored_layer_width' in st.session_state:
