@@ -43,9 +43,20 @@ def init_db():
         slicer_layer_height REAL,
         slicer_layer_width REAL,
         slicer_nozzle_speed REAL,
-        slicer_extrusion_multiplier REAL
+        slicer_extrusion_multiplier REAL,
+        suggestion_id INTEGER,
+        FOREIGN KEY (suggestion_id) REFERENCES suggested_experiments (id)
     )
     ''')
+    
+    # Add suggestion_id column if it doesn't exist (for existing databases)
+    try:
+        c.execute('ALTER TABLE experiments ADD COLUMN suggestion_id INTEGER')
+        conn.commit()
+        print("Added suggestion_id column to experiments table")
+    except sqlite3.OperationalError:
+        # Column already exists or other error - that's fine
+        pass
     
     # Create suggested_experiments table to track Bayesian optimization suggestions
     c.execute('''
@@ -153,14 +164,16 @@ def add_data_point(data_point):
         width_1, width_2, width_3,
         temp, humidity,
         slicer_layer_height, slicer_layer_width,
-        slicer_nozzle_speed, slicer_extrusion_multiplier
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        slicer_nozzle_speed, slicer_extrusion_multiplier,
+        suggestion_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data_point['height_1'], data_point['height_2'], data_point['height_3'],
         data_point['width_1'], data_point['width_2'], data_point['width_3'],
         data_point['temp'], data_point['humidity'],
         data_point['slicer_layer_height'], data_point['slicer_layer_width'],
-        data_point['slicer_nozzle_speed'], data_point['slicer_extrusion_multiplier']
+        data_point['slicer_nozzle_speed'], data_point['slicer_extrusion_multiplier'],
+        data_point.get('suggestion_id', None)
     ))
 
     conn.commit()
@@ -283,3 +296,70 @@ def get_suggested_experiments(limit=None):
     conn.close()
     
     return df
+
+
+def get_suggested_experiments_for_dropdown():
+    """Get suggested experiments formatted for dropdown selection
+    
+    Returns:
+        Dictionary mapping suggestion IDs to descriptive labels
+    """
+    conn = sqlite3.connect(get_db_path())
+    
+    query = '''
+    SELECT id, temp, humidity, slicer_layer_height, slicer_layer_width, 
+           slicer_nozzle_speed, slicer_extrusion_multiplier, 
+           predicted_width, predicted_height, total_mismatch, timestamp
+    FROM suggested_experiments 
+    ORDER BY timestamp DESC
+    '''
+    
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    suggestions = {}
+    for _, row in df.iterrows():
+        # Create a descriptive label for the dropdown
+        label = (f"Suggestion #{row['id']} - T:{row['temp']:.1f}°C, "
+                f"H:{row['slicer_layer_height']:.1f}mm, W:{row['slicer_layer_width']:.1f}mm "
+                f"(Pred: W={row['predicted_width']:.2f}, H={row['predicted_height']:.2f})")
+        suggestions[row['id']] = {
+            'label': label,
+            'temp': row['temp'],
+            'humidity': row['humidity'],
+            'slicer_layer_height': row['slicer_layer_height'],
+            'slicer_layer_width': row['slicer_layer_width'],
+            'slicer_nozzle_speed': row['slicer_nozzle_speed'],
+            'slicer_extrusion_multiplier': row['slicer_extrusion_multiplier'],
+            'predicted_width': row['predicted_width'],
+            'predicted_height': row['predicted_height']
+        }
+    
+    return suggestions
+
+
+def get_suggestion_by_id(suggestion_id):
+    """Get a specific suggestion by ID
+    
+    Args:
+        suggestion_id: ID of the suggestion to retrieve
+    
+    Returns:
+        Dictionary containing suggestion data or None if not found
+    """
+    conn = sqlite3.connect(get_db_path())
+    
+    query = '''
+    SELECT * FROM suggested_experiments WHERE id = ?
+    '''
+    
+    cursor = conn.cursor()
+    cursor.execute(query, (suggestion_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        columns = [description[0] for description in cursor.description]
+        return dict(zip(columns, row))
+    else:
+        return None

@@ -11,7 +11,7 @@ st.set_page_config(
 
 # Import modules
 from database import init_db, get_data, get_data_for_display, add_data_point, delete_data_point, \
-    delete_multiple_data_points, get_suggested_experiments
+    delete_multiple_data_points, get_suggested_experiments, get_suggested_experiments_for_dropdown, get_suggestion_by_id
 from models import train_gpr_models, make_prediction
 from visualization import create_scatter_plot, create_summary_stats
 from utils import add_custom_css, validate_new_data_point
@@ -37,6 +37,10 @@ if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 if "next_experiment_point" not in st.session_state:
     st.session_state.next_experiment_point = None
+if "selected_suggestion_id" not in st.session_state:
+    st.session_state.selected_suggestion_id = None
+if "prefilled_from_suggestion" not in st.session_state:
+    st.session_state.prefilled_from_suggestion = False
 
 # Show the logout button in the sidebar
 show_logout_button()
@@ -56,6 +60,35 @@ def store_params_for_form():
     st.session_state.stored_extrusion_multiplier = st.session_state.extrusion_multiplier_input
     st.session_state.show_add_data = True
     # Update sidebar selection
+    st.session_state.sidebar_page = "Add New Data"
+
+
+# Function to store parameters from next experiment suggestions with suggestion ID
+def store_suggestion_params_for_form(suggestion_id):
+    next_point = st.session_state.next_experiment_point
+    st.session_state.stored_temp = next_point['temp']
+    st.session_state.stored_humidity = next_point['humidity']
+    st.session_state.stored_layer_height = next_point['slicer_layer_height']
+    st.session_state.stored_layer_width = next_point['slicer_layer_width']
+    st.session_state.stored_nozzle_speed = next_point['slicer_nozzle_speed']
+    st.session_state.stored_extrusion_multiplier = next_point['slicer_extrusion_multiplier']
+    st.session_state.selected_suggestion_id = suggestion_id
+    st.session_state.prefilled_from_suggestion = True
+    st.session_state.show_add_data = True
+    st.session_state.sidebar_page = "Add New Data"
+
+
+# Function to store parameters from optimization history with suggestion ID  
+def store_history_suggestion_params_for_form(suggestion_data, suggestion_id):
+    st.session_state.stored_temp = suggestion_data['temp']
+    st.session_state.stored_humidity = suggestion_data['humidity']
+    st.session_state.stored_layer_height = suggestion_data['slicer_layer_height']
+    st.session_state.stored_layer_width = suggestion_data['slicer_layer_width']
+    st.session_state.stored_nozzle_speed = suggestion_data['slicer_nozzle_speed']
+    st.session_state.stored_extrusion_multiplier = suggestion_data['slicer_extrusion_multiplier']
+    st.session_state.selected_suggestion_id = suggestion_id
+    st.session_state.prefilled_from_suggestion = True
+    st.session_state.show_add_data = True
     st.session_state.sidebar_page = "Add New Data"
 
 
@@ -479,17 +512,12 @@ elif page == "Next Experiment":
 
             # Add button to use these parameters for a new experiment
             if st.button("Use These Parameters"):
-                # Store parameters in session state
-                st.session_state.stored_temp = next_point['temp']
-                st.session_state.stored_humidity = next_point['humidity']
-                st.session_state.stored_layer_height = next_point['slicer_layer_height']
-                st.session_state.stored_layer_width = next_point['slicer_layer_width']
-                st.session_state.stored_nozzle_speed = next_point['slicer_nozzle_speed']
-                st.session_state.stored_extrusion_multiplier = next_point['slicer_extrusion_multiplier']
-
-                # Set active tab to "Add New Data"
-                st.session_state.sidebar_page = "Add New Data"
-                st.session_state.show_add_data = True
+                # Find the suggestion ID for this point (most recent suggestion)
+                suggested_df = get_suggested_experiments(limit=1)
+                suggestion_id = suggested_df.iloc[0]['id'] if not suggested_df.empty else None
+                
+                # Store parameters in session state with suggestion ID
+                store_suggestion_params_for_form(suggestion_id)
                 st.rerun()
 
         elif suggestion_type == "Design Space Exploration (multiple points)" and hasattr(st.session_state,
@@ -552,17 +580,20 @@ elif page == "Next Experiment":
 
                     # Use parameters button
                     if st.button(f"Use Parameters {i + 1}", key=f"use_params_{i}"):
-                        # Store parameters in session state
-                        st.session_state.stored_temp = point['temp']
-                        st.session_state.stored_humidity = point['humidity']
-                        st.session_state.stored_layer_height = point['slicer_layer_height']
-                        st.session_state.stored_layer_width = point['slicer_layer_width']
-                        st.session_state.stored_nozzle_speed = point['slicer_nozzle_speed']
-                        st.session_state.stored_extrusion_multiplier = point['slicer_extrusion_multiplier']
-
-                        # Set active tab to "Add New Data"
-                        st.session_state.sidebar_page = "Add New Data"
-                        st.session_state.show_add_data = True
+                        # Find the suggestion ID for this point (get recent suggestions and find matching one)
+                        suggested_df = get_suggested_experiments(limit=len(st.session_state.next_experiment_points))
+                        # Match based on parameters (since they might not be in exact order)
+                        suggestion_id = None
+                        if not suggested_df.empty:
+                            for _, row in suggested_df.iterrows():
+                                if (abs(row['temp'] - point['temp']) < 0.01 and 
+                                    abs(row['humidity'] - point['humidity']) < 0.001 and
+                                    abs(row['slicer_layer_height'] - point['slicer_layer_height']) < 0.01):
+                                    suggestion_id = row['id']
+                                    break
+                        
+                        # Store parameters in session state with suggestion ID
+                        store_history_suggestion_params_for_form(point, suggestion_id)
                         st.rerun()
     else:
         st.info("No data available. Add data points to generate experiment suggestions.")
@@ -570,16 +601,55 @@ elif page == "Next Experiment":
 elif page == "Add New Data":
     st.header("Add New Data Point")
 
-    # Use parameters from Prediction tab if available
+    # Get available suggestions for dropdown
+    suggestions = get_suggested_experiments_for_dropdown()
+    
+    # Use parameters from stored values if available
     default_temp = st.session_state.get('stored_temp', 20.0)
     default_humidity = st.session_state.get('stored_humidity', 0.4)
     default_layer_height = st.session_state.get('stored_layer_height', 0.8)
     default_layer_width = st.session_state.get('stored_layer_width', 1.5)
     default_nozzle_speed = st.session_state.get('stored_nozzle_speed', 8.0)
     default_extrusion_multiplier = st.session_state.get('stored_extrusion_multiplier', 1.0)
+    
+    # Determine default suggestion selection
+    default_suggestion = st.session_state.get('selected_suggestion_id', None)
 
     # Form for adding new data
     with st.form("new_data_form"):
+        # Suggestion selection dropdown
+        if suggestions:
+            st.subheader("Suggestion Reference (Optional)")
+            suggestion_options = ["None - Manual Entry"] + [suggestions[sid]['label'] for sid in suggestions.keys()]
+            suggestion_ids = [None] + list(suggestions.keys())
+            
+            # Find default index
+            default_index = 0
+            if default_suggestion and default_suggestion in suggestions:
+                default_index = suggestion_ids.index(default_suggestion)
+            
+            selected_suggestion_option = st.selectbox(
+                "Select a suggestion to prefill parameters (you can still modify them):",
+                options=suggestion_options,
+                index=default_index,
+                key="suggestion_selectbox"
+            )
+            
+            # Get the selected suggestion ID
+            selected_suggestion_id = None if selected_suggestion_option == "None - Manual Entry" else suggestion_ids[suggestion_options.index(selected_suggestion_option)]
+            
+            # Update defaults if a suggestion is selected
+            if selected_suggestion_id and selected_suggestion_id in suggestions:
+                suggestion_data = suggestions[selected_suggestion_id]
+                default_temp = suggestion_data['temp']
+                default_humidity = suggestion_data['humidity']
+                default_layer_height = suggestion_data['slicer_layer_height']
+                default_layer_width = suggestion_data['slicer_layer_width']
+                default_nozzle_speed = suggestion_data['slicer_nozzle_speed']
+                default_extrusion_multiplier = suggestion_data['slicer_extrusion_multiplier']
+        else:
+            selected_suggestion_id = None
+        
         # Create two columns for the form layout
         form_col1, form_col2 = st.columns(2)
 
@@ -624,7 +694,8 @@ elif page == "Add New Data":
                 'slicer_layer_height': new_layer_height,
                 'slicer_layer_width': new_layer_width,
                 'slicer_nozzle_speed': new_nozzle_speed,
-                'slicer_extrusion_multiplier': new_extrusion_multiplier
+                'slicer_extrusion_multiplier': new_extrusion_multiplier,
+                'suggestion_id': selected_suggestion_id
             }
 
             # Validate the data point
@@ -650,6 +721,12 @@ elif page == "Add New Data":
                     del st.session_state.stored_nozzle_speed
                 if 'stored_extrusion_multiplier' in st.session_state:
                     del st.session_state.stored_extrusion_multiplier
+                
+                # Clear suggestion-related session state
+                if 'selected_suggestion_id' in st.session_state:
+                    del st.session_state.selected_suggestion_id
+                if 'prefilled_from_suggestion' in st.session_state:
+                    del st.session_state.prefilled_from_suggestion
 
                 # Reset prediction in session state
                 st.session_state.prediction = None
@@ -745,8 +822,30 @@ elif page == "Optimization History":
         if selected_type != "All":
             filtered_df = filtered_df[filtered_df['suggestion_type'] == selected_type]
         
-        # Display the filtered data
+        # Display the filtered data with action buttons
         st.dataframe(filtered_df)
+        
+        # Add "Use This Suggestion" buttons for each row
+        if not filtered_df.empty:
+            st.subheader("Use Suggestions")
+            st.markdown("Click a button below to use the corresponding suggestion parameters in 'Add New Data':")
+            
+            # Create columns for buttons (5 per row)
+            cols_per_row = 5
+            rows_needed = (len(filtered_df) + cols_per_row - 1) // cols_per_row
+            
+            for row_idx in range(rows_needed):
+                cols = st.columns(cols_per_row)
+                for col_idx in range(cols_per_row):
+                    data_idx = row_idx * cols_per_row + col_idx
+                    if data_idx < len(filtered_df):
+                        row_data = filtered_df.iloc[data_idx]
+                        with cols[col_idx]:
+                            button_key = f"use_suggestion_{row_data['id']}"
+                            if st.button(f"Use Suggestion #{row_data['id']}", key=button_key):
+                                # Store parameters and navigate to Add New Data
+                                store_history_suggestion_params_for_form(row_data.to_dict(), row_data['id'])
+                                st.rerun()
         
         # Allow export to CSV
         csv = filtered_df.to_csv(index=False)
