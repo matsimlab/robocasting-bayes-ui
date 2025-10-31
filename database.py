@@ -46,6 +46,7 @@ def init_db():
         slicer_nozzle_speed REAL,
         slicer_extrusion_multiplier REAL,
         suggestion_id INTEGER,
+        archived INTEGER DEFAULT 0,
         FOREIGN KEY (suggestion_id) REFERENCES suggested_experiments (id)
     )
     ''')
@@ -58,6 +59,27 @@ def init_db():
     except sqlite3.OperationalError:
         # Column already exists or other error - that's fine
         pass
+    
+    # Add archived column if it doesn't exist (for existing databases)
+    try:
+        c.execute('ALTER TABLE experiments ADD COLUMN archived INTEGER DEFAULT 0')
+        conn.commit()
+        print("Added archived column to experiments table")
+        
+        # Set default archived = 0 for existing records that don't have it
+        c.execute('UPDATE experiments SET archived = 0 WHERE archived IS NULL')
+        conn.commit()
+        print("Set default archived = 0 for existing records")
+        
+    except sqlite3.OperationalError:
+        # Column already exists or other error - still try to update NULL values
+        try:
+            c.execute('UPDATE experiments SET archived = 0 WHERE archived IS NULL')
+            if c.rowcount > 0:
+                conn.commit()
+                print(f"Updated {c.rowcount} records with default archived = 0")
+        except:
+            pass
     
     # Add layer_count column if it doesn't exist (for existing databases)
     try:
@@ -187,19 +209,35 @@ def get_db_path():
         return os.path.join(db_dir, 'robocasting.db')
 
 
-def get_data():
-    """Get all data from the database"""
+def get_data(include_archived=False):
+    """Get data from the database
+    
+    Args:
+        include_archived: If False (default), only returns non-archived records.
+                         If True, returns all records including archived ones.
+    """
     conn = sqlite3.connect(get_db_path())
-    query = "SELECT * FROM experiments"
+    if include_archived:
+        query = "SELECT * FROM experiments"
+    else:
+        query = "SELECT * FROM experiments WHERE archived = 0"
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
 
 
-def get_data_for_display():
-    """Get all data from the database with the internal ID hidden"""
+def get_data_for_display(include_archived=False):
+    """Get data from the database with the internal ID hidden
+    
+    Args:
+        include_archived: If False (default), only returns non-archived records.
+                         If True, returns all records including archived ones.
+    """
     conn = sqlite3.connect(get_db_path())
-    query = "SELECT * FROM experiments"
+    if include_archived:
+        query = "SELECT * FROM experiments"
+    else:
+        query = "SELECT * FROM experiments WHERE archived = 0"
     df = pd.read_sql_query(query, conn)
     conn.close()
 
@@ -238,8 +276,85 @@ def add_data_point(data_point):
     conn.close()
 
 
+def archive_data_point(id):
+    """Archive a data point by setting archived = 1
+    
+    Args:
+        id: ID of the experiment to archive
+    
+    Returns:
+        True if a row was archived, False otherwise
+    """
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    c.execute("UPDATE experiments SET archived = 1 WHERE id = ? AND archived = 0", (id,))
+
+    # Get the number of rows affected by the update operation
+    rows_archived = c.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return rows_archived > 0
+
+
+def unarchive_data_point(id):
+    """Unarchive a data point by setting archived = 0
+    
+    Args:
+        id: ID of the experiment to unarchive
+    
+    Returns:
+        True if a row was unarchived, False otherwise
+    """
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    c.execute("UPDATE experiments SET archived = 0 WHERE id = ? AND archived = 1", (id,))
+
+    # Get the number of rows affected by the update operation
+    rows_unarchived = c.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return rows_unarchived > 0
+
+
+def archive_multiple_data_points(ids):
+    """Archive multiple data points by setting archived = 1
+    
+    Args:
+        ids: List of experiment IDs to archive
+    
+    Returns:
+        Number of rows archived
+    """
+    if not ids:
+        return 0
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    # Create placeholders for the SQL query
+    placeholders = ','.join(['?'] * len(ids))
+    c.execute(f"UPDATE experiments SET archived = 1 WHERE id IN ({placeholders}) AND archived = 0", ids)
+
+    # Get the number of rows affected by the update operation
+    rows_archived = c.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return rows_archived
+
+
 def delete_data_point(id):
-    """Delete a data point from the database by ID"""
+    """Delete a data point from the database by ID (HARD DELETE - use archive_data_point instead)
+    
+    Note: This function performs a permanent deletion. Consider using archive_data_point() instead.
+    """
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
 
@@ -255,7 +370,10 @@ def delete_data_point(id):
 
 
 def delete_multiple_data_points(ids):
-    """Delete multiple data points from the database by IDs"""
+    """Delete multiple data points from the database by IDs (HARD DELETE - use archive_multiple_data_points instead)
+    
+    Note: This function performs a permanent deletion. Consider using archive_multiple_data_points() instead.
+    """
     if not ids:
         return 0
 

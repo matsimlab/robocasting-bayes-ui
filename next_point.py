@@ -7,8 +7,8 @@ from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
 from database import add_suggested_experiment
 
 
-def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_points=None, diversity_weight=0.0, 
-                           store_suggestion=True, suggestion_type="single_point"):
+def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_points=None, diversity_weight=0.0,
+                           store_suggestion=True, suggestion_type="single_point", include_uncertainty=None):
     """
     Suggest the next experiment point using Bayesian optimization to minimize
     the difference between slicer dimensions and actual printed dimensions.
@@ -20,11 +20,20 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
         n_calls: Number of iterations for the optimization
         previous_points: List of previously suggested points to avoid
         diversity_weight: Weight for the diversity penalty (0.0 = no penalty)
+        store_suggestion: Whether to store the suggestion in database
+        suggestion_type: Type of suggestion for database tracking
+        include_uncertainty: Whether to include uncertainty penalty (None = auto-decide based on suggestion_type)
 
     Returns:
         Dictionary containing the suggested parameters for the next experiment
     """
     width_model, height_model = models
+    
+    # Auto-decide whether to include uncertainty penalty
+    if include_uncertainty is None:
+        # For single point optimization, focus purely on dimension matching
+        # For design space exploration, include uncertainty for better exploration
+        include_uncertainty = (suggestion_type == "design_space_exploration")
 
     # Set default bounds if not provided
     if bounds is None:
@@ -108,32 +117,41 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
         return np.exp(-min_distance / sigma)
 
     # Function to minimize - we want to find points where the predicted dimensions
-    # match the slicer settings as closely as possible
+    # match the expected total dimensions as closely as possible
     def dimension_mismatch_objective(params):
         X = np.array([params])
 
         # Extract slicer settings for comparison
-        slicer_height = params[3]  # slicer_layer_height (index shifted due to layer_count)
-        slicer_width = params[4]  # slicer_layer_width (index shifted due to layer_count)
+        slicer_layer_height = params[3]  # Individual layer height
+        slicer_layer_width = params[4]   # Layer width
+        layer_count = params[2]          # Number of layers
+        
+        # Calculate expected total dimensions
+        expected_total_height = slicer_layer_height * layer_count  # Height accumulates with layers
+        expected_width = slicer_layer_width  # Width doesn't change with layer count
 
         # Get predictions
         width_pred, width_std = width_model.predict(X, return_std=True)
         height_pred, height_std = height_model.predict(X, return_std=True)
 
-        # Calculate absolute differences between predicted and target dimensions
-        height_diff = abs(height_pred[0] - slicer_height)
-        width_diff = abs(width_pred[0] - slicer_width)
+        # Calculate absolute differences between predicted and expected total dimensions
+        height_diff = abs(height_pred[0] - expected_total_height)
+        width_diff = abs(width_pred[0] - expected_width)
 
         # Combined error metric (sum of absolute differences)
         combined_error = height_diff + width_diff
 
-        # Include a small uncertainty component to avoid very uncertain regions
-        uncertainty_penalty = 0.2 * (width_std[0] + height_std[0])
+        # Include uncertainty component only if specified
+        uncertainty_penalty = 0.0
+        if include_uncertainty:
+            uncertainty_penalty = 0.2 * (width_std[0] + height_std[0])
 
         # Add diversity penalty to avoid suggesting similar points
         diversity_pen = diversity_weight * diversity_penalty(params, previous_points)
 
         # Return the objective to minimize (lower is better)
+        # For single point: pure dimension matching (combined_error only when diversity_weight=0 and include_uncertainty=False)
+        # For exploration: includes uncertainty penalty for exploration and diversity penalty for spread
         return combined_error + uncertainty_penalty + diversity_pen
 
     # Run the optimization
@@ -170,9 +188,12 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
     width_pred, width_std = width_model.predict(X, return_std=True)
     height_pred, height_std = height_model.predict(X, return_std=True)
 
-    # Calculate the dimension mismatches
-    height_mismatch = abs(height_pred[0] - suggested_point['slicer_layer_height'])
-    width_mismatch = abs(width_pred[0] - suggested_point['slicer_layer_width'])
+    # Calculate the dimension mismatches using correct total dimensions
+    expected_total_height = suggested_point['slicer_layer_height'] * suggested_point['layer_count']
+    expected_width = suggested_point['slicer_layer_width']
+    
+    height_mismatch = abs(height_pred[0] - expected_total_height)
+    width_mismatch = abs(width_pred[0] - expected_width)
     total_mismatch = height_mismatch + width_mismatch
 
     # Add predictions to the result
@@ -194,7 +215,7 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=20, previous_poin
     return suggested_point
 
 
-def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_calls=20):
+def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_calls=30):
     """
     Suggest multiple points to explore the design space using Bayesian optimization
     to minimize dimensional errors between slicer settings and print outcomes.
@@ -245,7 +266,8 @@ def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_ca
             previous_points=suggested_points,
             diversity_weight=diversity_weight,
             store_suggestion=True,  # Store each point
-            suggestion_type="design_space_exploration"  # Properly label them
+            suggestion_type="design_space_exploration",  # Properly label them
+            include_uncertainty=True  # Keep uncertainty for exploration mode
         )
 
         suggested_points.append(next_point)

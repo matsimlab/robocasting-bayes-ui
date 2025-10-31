@@ -11,7 +11,8 @@ st.set_page_config(
 
 # Import modules
 from database import init_db, get_data, get_data_for_display, add_data_point, delete_data_point, \
-    delete_multiple_data_points, get_suggested_experiments, get_suggested_experiments_for_dropdown, get_suggestion_by_id
+    delete_multiple_data_points, get_suggested_experiments, get_suggested_experiments_for_dropdown, get_suggestion_by_id, \
+    archive_data_point, unarchive_data_point, archive_multiple_data_points
 from models import train_gpr_models, make_prediction
 from visualization import create_scatter_plot, create_summary_stats
 from utils import add_custom_css, validate_new_data_point
@@ -41,6 +42,8 @@ if "selected_suggestion_id" not in st.session_state:
     st.session_state.selected_suggestion_id = None
 if "prefilled_from_suggestion" not in st.session_state:
     st.session_state.prefilled_from_suggestion = False
+if "show_archived" not in st.session_state:
+    st.session_state.show_archived = False
 
 # Show the logout button in the sidebar
 show_logout_button()
@@ -125,56 +128,122 @@ if 'show_add_data' in st.session_state and st.session_state.show_add_data:
 if page == "Data Explorer":
     st.header("Dataset")
     
-    # Add a button to clear cache and reload data if there are issues
-    if st.button("🔄 Clear Cache & Reload Data", help="Use this if you're experiencing data issues"):
-        st.cache_resource.clear()
-        st.rerun()
+    # Add controls row
+    controls_col1, controls_col2 = st.columns([1, 3])
+    
+    with controls_col1:
+        # Add a button to clear cache and reload data if there are issues
+        if st.button("🔄 Clear Cache & Reload Data", help="Use this if you're experiencing data issues"):
+            st.cache_resource.clear()
+            st.rerun()
+    
+    with controls_col2:
+        # Toggle to show/hide archived records
+        show_archived = st.checkbox(
+            "Show archived records", 
+            value=st.session_state.show_archived,
+            help="Display archived experiments in the table (they won't be used for predictions)"
+        )
+        if show_archived != st.session_state.show_archived:
+            st.session_state.show_archived = show_archived
+            st.rerun()
 
-    # Load data
-    full_data, display_data = get_data_for_display()
+    # Load data with archived filter
+    full_data, display_data = get_data_for_display(include_archived=st.session_state.show_archived)
 
-    # Handle data and deletion
+    # Handle data and archiving
     if not full_data.empty:
-        st.header("Dataset")
+        # Add archived indicator column to display
+        if 'archived' in full_data.columns and st.session_state.show_archived:
+            display_with_status = display_data.copy()
+            # Insert status column at the beginning
+            display_with_status.insert(0, 'Status', full_data['archived'].apply(lambda x: '📦 Archived' if x == 1 else '✓ Active'))
+            st.dataframe(display_with_status, use_container_width=True)
+        else:
+            st.dataframe(display_data, use_container_width=True)
 
-        # Display data table without the ID column
-        st.dataframe(display_data, use_container_width=True)
+        # Add archive/unarchive functionality
+        with st.expander("Archive/Unarchive Data Points"):
+            # Create two tabs for archive and unarchive
+            archive_tab, unarchive_tab = st.tabs(["📦 Archive", "📤 Unarchive"])
+            
+            with archive_tab:
+                st.info("ℹ️ Archived records are hidden from predictions and visualizations but can be restored later.")
+                
+                # Get non-archived records only
+                active_data = full_data[full_data['archived'] == 0] if 'archived' in full_data.columns else full_data
+                
+                if not active_data.empty:
+                    # Simple numeric selector for row ID - but show more meaningful info
+                    id_to_info = {}
+                    for idx, row in active_data.iterrows():
+                        row_id = row['id']
+                        # Create a descriptive label for each row
+                        info = f"Row {idx + 1}: Temp={row['temp']}°C, Width={row['width_1']:.2f}mm, Height={row['height_1']:.2f}mm"
+                        id_to_info[row_id] = info
 
-        # Add delete functionality with a more compatible approach
-        with st.expander("Delete Data Points"):
-            st.warning("⚠️ Select a row to delete. This action cannot be undone.")
+                    selected_id = st.selectbox(
+                        "Select row to archive:",
+                        options=list(id_to_info.keys()),
+                        format_func=lambda x: id_to_info[x],
+                        key="archive_selectbox"
+                    )
 
-            # Simple numeric selector for row ID - but show more meaningful info
-            id_to_info = {}
-            for idx, row in full_data.iterrows():
-                row_id = row['id']
-                # Create a descriptive label for each row
-                info = f"Row {idx + 1}: Temp={row['temp']}°C, Width={row['width_1']:.2f}mm, Height={row['height_1']:.2f}mm"
-                id_to_info[row_id] = info
-
-            selected_id = st.selectbox(
-                "Select row to delete:",
-                options=list(id_to_info.keys()),
-                format_func=lambda x: id_to_info[x]
-            )
-
-            if st.button("Delete Selected Row", type="primary"):
-                if delete_data_point(selected_id):
-                    st.success(f"Successfully deleted row")
-                    # Clear the prediction if it exists, as the data has changed
-                    if 'prediction' in st.session_state:
-                        st.session_state.prediction = None
-                    # Rerun the app to refresh the data
-                    st.rerun()
+                    if st.button("Archive Selected Row", type="primary", key="archive_button"):
+                        if archive_data_point(selected_id):
+                            st.success(f"Successfully archived row")
+                            # Clear the prediction if it exists, as the data has changed
+                            if 'prediction' in st.session_state:
+                                st.session_state.prediction = None
+                            # Rerun the app to refresh the data
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to archive row")
                 else:
-                    st.error(f"Failed to delete row")
+                    st.info("No active records to archive.")
+            
+            with unarchive_tab:
+                st.info("ℹ️ Restore archived records to make them available for predictions and visualizations.")
+                
+                # Get archived records only
+                archived_data = full_data[full_data['archived'] == 1] if 'archived' in full_data.columns else pd.DataFrame()
+                
+                if not archived_data.empty:
+                    # Simple numeric selector for row ID - but show more meaningful info
+                    id_to_info = {}
+                    for idx, row in archived_data.iterrows():
+                        row_id = row['id']
+                        # Create a descriptive label for each row
+                        info = f"Row {idx + 1}: Temp={row['temp']}°C, Width={row['width_1']:.2f}mm, Height={row['height_1']:.2f}mm"
+                        id_to_info[row_id] = info
+
+                    selected_id = st.selectbox(
+                        "Select row to unarchive:",
+                        options=list(id_to_info.keys()),
+                        format_func=lambda x: id_to_info[x],
+                        key="unarchive_selectbox"
+                    )
+
+                    if st.button("Unarchive Selected Row", type="primary", key="unarchive_button"):
+                        if unarchive_data_point(selected_id):
+                            st.success(f"Successfully unarchived row")
+                            # Clear the prediction if it exists, as the data has changed
+                            if 'prediction' in st.session_state:
+                                st.session_state.prediction = None
+                            # Rerun the app to refresh the data
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to unarchive row")
+                else:
+                    st.info("No archived records to restore. Archive some records first to see them here.")
     else:
         st.info("No data available. Add data points to see the dataset.")
 
-    # Display data summary
-    st.header("Data Summary")
-    if not full_data.empty:
-        stats = create_summary_stats(full_data)
+    # Display data summary (only for active records)
+    st.header("Data Summary (Active Records Only)")
+    active_data = full_data[full_data['archived'] == 0] if 'archived' in full_data.columns and not full_data.empty else full_data
+    if not active_data.empty:
+        stats = create_summary_stats(active_data)
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -187,21 +256,21 @@ if page == "Data Explorer":
             st.metric("Avg Temperature", f"{stats['avg_temp']:.1f} °C")
 
         # Visualization section
-        st.header("Data Visualization")
+        st.header("Data Visualization (Active Records Only)")
 
         viz_col1, viz_col2 = st.columns(2)
 
         with viz_col1:
             # Width vs Temperature scatter plot
             st.plotly_chart(
-                create_scatter_plot(full_data, "temp", "width_1", "Width vs Temperature"),
+                create_scatter_plot(active_data, "temp", "width_1", "Width vs Temperature"),
                 use_container_width=True
             )
 
         with viz_col2:
             # Height vs Temperature scatter plot
             st.plotly_chart(
-                create_scatter_plot(full_data, "temp", "height_1", "Height vs Temperature"),
+                create_scatter_plot(active_data, "temp", "height_1", "Height vs Temperature"),
                 use_container_width=True
             )
 
@@ -485,8 +554,9 @@ elif page == "Next Experiment":
         This tab uses Bayesian optimization to suggest the next experiment point that will 
         help minimize the difference between your slicer settings and the actual printed dimensions.
 
-        The algorithm looks for parameter combinations where the predicted height and width 
-        output will most closely match the height and width you specify in your slicer settings.
+        **Two optimization approaches:**
+        - **Single Point**: Pure dimension matching - finds parameters with best predicted accuracy
+        - **Design Space Exploration**: Balances accuracy with exploration and diversity for comprehensive space coverage
         """)
 
         # Options for suggestion
@@ -494,13 +564,14 @@ elif page == "Next Experiment":
 
         suggestion_type = st.radio(
             "Suggestion approach:",
-            ["Optimal Dimension Matching (single point)", "Design Space Exploration (multiple points)"]
+            ["Optimal Dimension Matching (single point) - Pure accuracy focus", 
+             "Design Space Exploration (multiple points) - Balanced accuracy & exploration"]
         )
 
-        if suggestion_type == "Optimal Dimension Matching (single point)":
+        if suggestion_type.startswith("Optimal Dimension Matching"):
             # Button to generate suggestion
-            if st.button("Suggest Next Experiment"):
-                with st.spinner("Finding optimal parameters for dimension matching..."):
+            if st.button("Find Best Dimension Match"):
+                with st.spinner("Finding parameters with best predicted dimension matching..."):
                     next_point = suggest_next_experiment(data, (width_model, height_model), 
                                                         store_suggestion=True, 
                                                         suggestion_type="single_point")
@@ -517,8 +588,9 @@ elif page == "Next Experiment":
                     st.session_state.next_experiment_points = next_points
 
         # Display suggestion if available
-        if suggestion_type == "Optimal Dimension Matching (single point)" and st.session_state.next_experiment_point is not None:
-            st.subheader("Suggested Experiment Parameters")
+        if suggestion_type.startswith("Optimal Dimension Matching") and st.session_state.next_experiment_point is not None:
+            st.subheader("Best Dimension Matching Parameters")
+            st.info("💡 These parameters are optimized purely for best dimension accuracy (no exploration bias)")
 
             next_point = st.session_state.next_experiment_point
 
@@ -529,14 +601,14 @@ elif page == "Next Experiment":
                 st.metric("Humidity", f"{next_point['humidity']:.2f}")
             with col2:
                 st.metric("Layer Count", f"{next_point['layer_count']}")
-                st.metric("Layer Height", f"{next_point['slicer_layer_height']:.1f}")
+                st.metric("Layer Height", f"{next_point['slicer_layer_height']:.2f}")
             with col3:
-                st.metric("Layer Width", f"{next_point['slicer_layer_width']:.1f}")
-                st.metric("Nozzle Speed", f"{next_point['slicer_nozzle_speed']:.1f}")
+                st.metric("Layer Width", f"{next_point['slicer_layer_width']:.2f}")
+                st.metric("Nozzle Speed", f"{next_point['slicer_nozzle_speed']:.2f}")
                 st.metric("Extrusion Multiplier", f"{next_point['slicer_extrusion_multiplier']:.2f}")
 
             # Display prediction for this point
-            st.subheader("Expected Outcome")
+            st.subheader("Predicted Outcome")
             pred_col1, pred_col2 = st.columns(2)
 
             with pred_col1:
@@ -551,10 +623,14 @@ elif page == "Next Experiment":
 
             # Add visual comparison of target vs predicted dimensions
             st.subheader("Dimension Comparison")
+            
+            # Calculate expected total dimensions
+            expected_total_height = next_point['slicer_layer_height'] * next_point['layer_count']
+            expected_width = next_point['slicer_layer_width']
 
             # Calculate percentage match for height and width
-            height_match = 100 * (1 - next_point['height_mismatch'] / next_point['slicer_layer_height'])
-            width_match = 100 * (1 - next_point['width_mismatch'] / next_point['slicer_layer_width'])
+            height_match = 100 * (1 - next_point['height_mismatch'] / expected_total_height)
+            width_match = 100 * (1 - next_point['width_mismatch'] / expected_width)
 
             # Ensure percentages are within reasonable bounds
             height_match = max(0, min(100, height_match))
@@ -564,14 +640,15 @@ elif page == "Next Experiment":
             match_col1, match_col2 = st.columns(2)
             with match_col1:
                 st.metric("Height Match", f"{height_match:.1f}%")
-                st.text(f"Target: {next_point['slicer_layer_height']:.2f} mm")
-                st.text(f"Expected: {next_point['predicted_height']:.2f} mm")
+                st.text(f"Target Total Height: {expected_total_height:.2f} mm")
+                st.text(f"({next_point['slicer_layer_height']:.2f} mm × {next_point['layer_count']} layers)")
+                st.text(f"Predicted: {next_point['predicted_height']:.2f} mm")
                 st.progress(height_match / 100)
 
             with match_col2:
                 st.metric("Width Match", f"{width_match:.1f}%")
-                st.text(f"Target: {next_point['slicer_layer_width']:.2f} mm")
-                st.text(f"Expected: {next_point['predicted_width']:.2f} mm")
+                st.text(f"Target Width: {expected_width:.2f} mm")
+                st.text(f"Predicted: {next_point['predicted_width']:.2f} mm")
                 st.progress(width_match / 100)
 
             # Add button to use these parameters for a new experiment
@@ -621,9 +698,11 @@ elif page == "Next Experiment":
 
                     st.info(f"Total dimension mismatch: {point['total_mismatch']:.3f} mm")
 
-                    # Calculate percentage match for height and width
-                    height_match = 100 * (1 - point['height_mismatch'] / point['slicer_layer_height'])
-                    width_match = 100 * (1 - point['width_mismatch'] / point['slicer_layer_width'])
+                    # Calculate expected total dimensions and percentage match
+                    expected_total_height = point['slicer_layer_height'] * point['layer_count']
+                    expected_width = point['slicer_layer_width']
+                    height_match = 100 * (1 - point['height_mismatch'] / expected_total_height)
+                    width_match = 100 * (1 - point['width_mismatch'] / expected_width)
 
                     # Ensure percentages are within reasonable bounds
                     height_match = max(0, min(100, height_match))
@@ -633,14 +712,15 @@ elif page == "Next Experiment":
                     match_col1, match_col2 = st.columns(2)
                     with match_col1:
                         st.metric("Height Match", f"{height_match:.1f}%")
-                        st.text(f"Target: {point['slicer_layer_height']:.2f} mm")
-                        st.text(f"Expected: {point['predicted_height']:.2f} mm")
+                        st.text(f"Target Total: {expected_total_height:.2f} mm")
+                        st.text(f"({point['slicer_layer_height']:.2f} × {point['layer_count']} layers)")
+                        st.text(f"Predicted: {point['predicted_height']:.2f} mm")
                         st.progress(height_match / 100)
 
                     with match_col2:
                         st.metric("Width Match", f"{width_match:.1f}%")
-                        st.text(f"Target: {point['slicer_layer_width']:.2f} mm")
-                        st.text(f"Expected: {point['predicted_width']:.2f} mm")
+                        st.text(f"Target: {expected_width:.2f} mm")
+                        st.text(f"Predicted: {point['predicted_width']:.2f} mm")
                         st.progress(width_match / 100)
 
                     # Use parameters button
