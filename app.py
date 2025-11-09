@@ -337,12 +337,56 @@ elif page == "Predictions":
             st.write(f"**Layer count distribution:** {dict(layer_counts)}")
         
         try:
-            # Train models
-            width_model, height_model = train_gpr_models(data)
+            # Train models with CV evaluation
+            result = train_gpr_models(data)
             
-            if width_model is None or height_model is None:
+            if result is None or result[0] is None or result[1] is None:
                 st.error("Failed to train models. Please check the data and try clearing the cache.")
                 st.stop()
+            
+            width_model, height_model, cv_metrics = result
+            
+            # Display cross-validation metrics
+            st.subheader("📊 Model Performance (5-Fold Cross-Validation)")
+            
+            metric_col1, metric_col2 = st.columns(2)
+            
+            with metric_col1:
+                st.markdown("**Width Prediction Model**")
+                st.metric(
+                    "Mean Absolute Error (MAE)",
+                    f"{cv_metrics['width']['mae_mean']:.4f} mm",
+                    delta=f"±{cv_metrics['width']['mae_std']:.4f} mm",
+                    delta_color="off"
+                )
+                st.metric(
+                    "R² Score",
+                    f"{cv_metrics['width']['r2_mean']:.4f}",
+                    delta=f"±{cv_metrics['width']['r2_std']:.4f}",
+                    delta_color="off"
+                )
+            
+            with metric_col2:
+                st.markdown("**Height Prediction Model**")
+                st.metric(
+                    "Mean Absolute Error (MAE)",
+                    f"{cv_metrics['height']['mae_mean']:.4f} mm",
+                    delta=f"±{cv_metrics['height']['mae_std']:.4f} mm",
+                    delta_color="off"
+                )
+                st.metric(
+                    "R² Score",
+                    f"{cv_metrics['height']['r2_mean']:.4f}",
+                    delta=f"±{cv_metrics['height']['r2_std']:.4f}",
+                    delta_color="off"
+                )
+            
+            st.info(
+                f"📝 **Evaluation Details:** Performance evaluated using {cv_metrics['n_folds']}-fold "
+                f"cross-validation on {cv_metrics['n_samples']} samples. "
+                f"MAE represents average prediction error in mm. R² represents proportion of variance explained (0-1, higher is better)."
+            )
+            
         except Exception as e:
             st.error(f"Error training models: {str(e)}")
             st.write("Try clearing the cache and reloading the data.")
@@ -427,7 +471,7 @@ elif page == "Predictions":
         # Button to make prediction
         if st.button("Calculate Prediction"):
             # Make prediction
-            prediction = make_prediction(params, (width_model, height_model))
+            prediction = make_prediction(params, (width_model, height_model, cv_metrics))
 
             # Store prediction in session state
             st.session_state.prediction = prediction
@@ -547,7 +591,11 @@ elif page == "Next Experiment":
 
     if not data.empty:
         # Train models if we haven't already
-        width_model, height_model = train_gpr_models(data)
+        result = train_gpr_models(data)
+        if result is None or result[0] is None:
+            st.error("Failed to train models")
+            st.stop()
+        width_model, height_model, cv_metrics = result
 
         # Explanation
         st.markdown("""

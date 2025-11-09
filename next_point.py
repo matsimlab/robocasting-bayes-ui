@@ -12,6 +12,11 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
     """
     Suggest the next experiment point using Bayesian optimization to minimize
     the difference between slicer dimensions and actual printed dimensions.
+    
+    NOTE: Now uses only 3 features (matching robocasting):
+    - slicer_nozzle_speed
+    - slicer_extrusion_multiplier  
+    - layer_count
 
     Args:
         data: DataFrame containing the existing experiment data
@@ -29,23 +34,25 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
     """
     width_model, height_model = models
     
+    # Get the scaler and features from the model
+    scaler = width_model._scaler
+    features = width_model._features  # ['slicer_nozzle_speed', 'slicer_extrusion_multiplier', 'layer_count']
+    
     # Auto-decide whether to include uncertainty penalty
     if include_uncertainty is None:
         # For single point optimization, focus purely on dimension matching
         # For design space exploration, include uncertainty for better exploration
         include_uncertainty = (suggestion_type == "design_space_exploration")
 
-    # Set default bounds if not provided
+    # Set default bounds if not provided - ONLY FOR THE 3 FEATURES USED
     if bounds is None:
         bounds = {
-            'temp': (data['temp'].min(), data['temp'].max()),
-            'humidity': (data['humidity'].min(), data['humidity'].max()),
-            'layer_count': (data['layer_count'].min(), data['layer_count'].max()),
+            'slicer_nozzle_speed': (3.0, 22.0),  # Corrected range
+            'slicer_extrusion_multiplier': (0.4, 0.8),  # Corrected range
+            'layer_count': (1, 3),  # Corrected range
+            # Keep these for calculating expected dimensions, but don't optimize over them
             'slicer_layer_height': (data['slicer_layer_height'].min(), data['slicer_layer_height'].max()),
             'slicer_layer_width': (data['slicer_layer_width'].min(), data['slicer_layer_width'].max()),
-            'slicer_nozzle_speed': (data['slicer_nozzle_speed'].min(), data['slicer_nozzle_speed'].max()),
-            'slicer_extrusion_multiplier': (
-                data['slicer_extrusion_multiplier'].min(), data['slicer_extrusion_multiplier'].max())
         }
 
     # Adjust bounds to ensure min < max for each parameter
@@ -55,17 +62,18 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
             delta = max(0.05 * abs(min_val), 0.01)  # At least 0.01 difference
             bounds[key] = (min_val - delta, max_val + delta)
 
-    # Define the search space for optimization
+    # Define the search space for optimization - ONLY 3 FEATURES
     space = [
-        Real(bounds['temp'][0], bounds['temp'][1], name='temp'),
-        Real(bounds['humidity'][0], bounds['humidity'][1], name='humidity'),
-        Integer(int(bounds['layer_count'][0]), int(bounds['layer_count'][1]), name='layer_count'),
-        Real(bounds['slicer_layer_height'][0], bounds['slicer_layer_height'][1], name='slicer_layer_height'),
-        Real(bounds['slicer_layer_width'][0], bounds['slicer_layer_width'][1], name='slicer_layer_width'),
         Real(bounds['slicer_nozzle_speed'][0], bounds['slicer_nozzle_speed'][1], name='slicer_nozzle_speed'),
         Real(bounds['slicer_extrusion_multiplier'][0], bounds['slicer_extrusion_multiplier'][1],
-             name='slicer_extrusion_multiplier')
+             name='slicer_extrusion_multiplier'),
+        Integer(int(bounds['layer_count'][0]), int(bounds['layer_count'][1]), name='layer_count'),
     ]
+    
+    # For calculating expected dimensions, we need to also suggest layer_height and layer_width
+    # Use the mean values from the data for these
+    default_layer_height = data['slicer_layer_height'].mean()
+    default_layer_width = data['slicer_layer_width'].mean()
 
     # Function to calculate normalized distances to previous points
     def diversity_penalty(params, prev_points, sigma=0.2):
@@ -73,11 +81,11 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         if not prev_points or diversity_weight <= 0:
             return 0.0
 
-        # Normalize parameters based on bounds
+        # Normalize parameters based on bounds - ONLY 3 FEATURES
         bounds_list = [
-            bounds['temp'], bounds['humidity'], bounds['layer_count'],
-            bounds['slicer_layer_height'], bounds['slicer_layer_width'], 
-            bounds['slicer_nozzle_speed'], bounds['slicer_extrusion_multiplier']
+            bounds['slicer_nozzle_speed'],
+            bounds['slicer_extrusion_multiplier'],
+            bounds['layer_count']
         ]
 
         # Convert to normalized space [0,1]
@@ -94,9 +102,9 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         min_distance = float('inf')
         for point in prev_points:
             point_array = [
-                point['temp'], point['humidity'], point['layer_count'],
-                point['slicer_layer_height'], point['slicer_layer_width'],
-                point['slicer_nozzle_speed'], point['slicer_extrusion_multiplier']
+                point['slicer_nozzle_speed'],
+                point['slicer_extrusion_multiplier'],
+                point['layer_count']
             ]
 
             # Convert previous point to normalized space
@@ -118,13 +126,23 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
 
     # Function to minimize - we want to find points where the predicted dimensions
     # match the expected total dimensions as closely as possible
+    iteration_count = [0]  # Use list to make it mutable in nested function
+    
     def dimension_mismatch_objective(params):
-        X = np.array([params])
-
-        # Extract slicer settings for comparison
-        slicer_layer_height = params[3]  # Individual layer height
-        slicer_layer_width = params[4]   # Layer width
-        layer_count = params[2]          # Number of layers
+        iteration_count[0] += 1
+        
+        # params is [slicer_nozzle_speed, slicer_extrusion_multiplier, layer_count]
+        slicer_nozzle_speed = params[0]
+        slicer_extrusion_multiplier = params[1]
+        layer_count = params[2]
+        
+        # Scale the features using the same scaler from training
+        X_raw = np.array([[slicer_nozzle_speed, slicer_extrusion_multiplier, layer_count]])
+        X = scaler.transform(X_raw)
+        
+        # Use default layer_height and layer_width for calculating expected dimensions
+        slicer_layer_height = default_layer_height
+        slicer_layer_width = default_layer_width
         
         # Calculate expected total dimensions
         expected_total_height = slicer_layer_height * layer_count  # Height accumulates with layers
@@ -139,6 +157,7 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         width_diff = abs(width_pred[0] - expected_width)
 
         # Combined error metric (sum of absolute differences)
+        # Simple additive - treats both dimensions equally
         combined_error = height_diff + width_diff
 
         # Include uncertainty component only if specified
@@ -149,10 +168,17 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         # Add diversity penalty to avoid suggesting similar points
         diversity_pen = diversity_weight * diversity_penalty(params, previous_points)
 
+        # Total objective
+        total_objective = combined_error + uncertainty_penalty + diversity_pen
+        
+        # Log this iteration
+        print(f"Iteration {iteration_count[0]:3d}: "
+              f"speed={slicer_nozzle_speed:5.2f}, mult={slicer_extrusion_multiplier:.3f}, layers={layer_count}, "
+              f"h_diff={height_diff:.4f}, w_diff={width_diff:.4f}, "
+              f"combined={combined_error:.6f}, objective={total_objective:.6f}")
+        
         # Return the objective to minimize (lower is better)
-        # For single point: pure dimension matching (combined_error only when diversity_weight=0 and include_uncertainty=False)
-        # For exploration: includes uncertainty penalty for exploration and diversity penalty for spread
-        return combined_error + uncertainty_penalty + diversity_pen
+        return total_objective
 
     # Run the optimization
     result = gp_minimize(
@@ -163,27 +189,25 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         verbose=False
     )
 
-    # Extract the best point
+    # Extract the best point - params are [slicer_nozzle_speed, slicer_extrusion_multiplier, layer_count]
     suggested_point = {
-        'temp': result.x[0],
-        'humidity': result.x[1],
+        'slicer_nozzle_speed': result.x[0],
+        'slicer_extrusion_multiplier': result.x[1],
         'layer_count': int(result.x[2]),  # Convert to int since it's discrete
-        'slicer_layer_height': result.x[3],
-        'slicer_layer_width': result.x[4],
-        'slicer_nozzle_speed': result.x[5],
-        'slicer_extrusion_multiplier': result.x[6]
+        # Add fixed values for parameters not optimized
+        'temp': data['temp'].mean(),  # Use mean value
+        'humidity': data['humidity'].mean(),  # Use mean value  
+        'slicer_layer_height': default_layer_height,
+        'slicer_layer_width': default_layer_width,
     }
 
     # Get the predicted values and uncertainties at this point
-    X = np.array([[
-        suggested_point['temp'],
-        suggested_point['humidity'],
-        suggested_point['layer_count'],
-        suggested_point['slicer_layer_height'],
-        suggested_point['slicer_layer_width'],
+    X_raw = np.array([[
         suggested_point['slicer_nozzle_speed'],
-        suggested_point['slicer_extrusion_multiplier']
+        suggested_point['slicer_extrusion_multiplier'],
+        suggested_point['layer_count']
     ]])
+    X = scaler.transform(X_raw)
 
     width_pred, width_std = width_model.predict(X, return_std=True)
     height_pred, height_std = height_model.predict(X, return_std=True)
@@ -230,17 +254,15 @@ def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_ca
     Returns:
         List of dictionaries containing suggested parameters
     """
-    # Set default bounds if not provided
+    # Set default bounds if not provided - ONLY FOR THE 3 FEATURES USED
     if bounds is None:
         bounds = {
-            'temp': (data['temp'].min(), data['temp'].max()),
-            'humidity': (data['humidity'].min(), data['humidity'].max()),
-            'layer_count': (data['layer_count'].min(), data['layer_count'].max()),
+            'slicer_nozzle_speed': (3.0, 22.0),  # Corrected range
+            'slicer_extrusion_multiplier': (0.4, 0.8),  # Corrected range  
+            'layer_count': (1, 3),  # Corrected range
+            # Keep these for calculating expected dimensions
             'slicer_layer_height': (data['slicer_layer_height'].min(), data['slicer_layer_height'].max()),
             'slicer_layer_width': (data['slicer_layer_width'].min(), data['slicer_layer_width'].max()),
-            'slicer_nozzle_speed': (data['slicer_nozzle_speed'].min(), data['slicer_nozzle_speed'].max()),
-            'slicer_extrusion_multiplier': (
-                data['slicer_extrusion_multiplier'].min(), data['slicer_extrusion_multiplier'].max())
         }
 
     # Adjust bounds to ensure min < max for each parameter
