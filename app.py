@@ -615,14 +615,47 @@ elif page == "Next Experiment":
             ["Optimal Dimension Matching (single point) - Pure accuracy focus", 
              "Design Space Exploration (multiple points) - Balanced accuracy & exploration"]
         )
+        
+        # Target dimension inputs
+        st.subheader("Target Dimensions")
+        st.info("💡 Specify your target dimensions. The optimizer will find parameters that best achieve these targets.")
+        
+        target_col1, target_col2 = st.columns(2)
+        with target_col1:
+            target_height = st.number_input(
+                "Target Height (mm per layer)",
+                min_value=0.1,
+                max_value=5.0,
+                value=1.2,
+                step=0.1,
+                format="%.1f",
+                help="Target height for each layer (e.g., 1.2mm if you want 80% of 1.5mm slicer setting)",
+                key="target_height_input"
+            )
+        
+        with target_col2:
+            target_width = st.number_input(
+                "Target Width (mm)",
+                min_value=0.1,
+                max_value=10.0,
+                value=2.0,
+                step=0.1,
+                format="%.1f",
+                help="Target width (e.g., 2.0mm to match slicer setting)",
+                key="target_width_input"
+            )
 
         if suggestion_type.startswith("Optimal Dimension Matching"):
             # Button to generate suggestion
             if st.button("Find Best Dimension Match"):
                 with st.spinner("Finding parameters with best predicted dimension matching..."):
-                    next_point = suggest_next_experiment(data, (width_model, height_model), 
-                                                        store_suggestion=True, 
-                                                        suggestion_type="single_point")
+                    next_point = suggest_next_experiment(
+                        data, (width_model, height_model), 
+                        store_suggestion=True, 
+                        suggestion_type="single_point",
+                        target_height=target_height,
+                        target_width=target_width
+                    )
                     st.session_state.next_experiment_point = next_point
         else:
             # Multiple point suggestion
@@ -631,7 +664,9 @@ elif page == "Next Experiment":
             if st.button("Generate Suggestions"):
                 with st.spinner(f"Finding {num_points} diverse experiment points..."):
                     next_points = suggest_design_space_exploration(
-                        data, (width_model, height_model), n_points=num_points
+                        data, (width_model, height_model), n_points=num_points,
+                        target_height=target_height,
+                        target_width=target_width
                     )
                     st.session_state.next_experiment_points = next_points
 
@@ -672,13 +707,24 @@ elif page == "Next Experiment":
             # Add visual comparison of target vs predicted dimensions
             st.subheader("Dimension Comparison")
             
-            # Calculate expected total dimensions
-            expected_total_height = next_point['slicer_layer_height'] * next_point['layer_count']
-            expected_width = next_point['slicer_layer_width']
+            # Get target values from the suggestion (if stored) or calculate from slicer settings
+            if next_point.get('target_height') is not None:
+                target_height_per_layer = next_point['target_height']
+                target_total_height = target_height_per_layer * next_point['layer_count']
+            else:
+                # Fallback for old suggestions without stored targets
+                target_total_height = next_point['slicer_layer_height'] * next_point['layer_count']
+                target_height_per_layer = next_point['slicer_layer_height']
+            
+            if next_point.get('target_width') is not None:
+                target_width_value = next_point['target_width']
+            else:
+                # Fallback for old suggestions without stored targets
+                target_width_value = next_point['slicer_layer_width']
 
             # Calculate percentage match for height and width
-            height_match = 100 * (1 - next_point['height_mismatch'] / expected_total_height)
-            width_match = 100 * (1 - next_point['width_mismatch'] / expected_width)
+            height_match = 100 * (1 - next_point['height_mismatch'] / target_total_height) if target_total_height > 0 else 0
+            width_match = 100 * (1 - next_point['width_mismatch'] / target_width_value) if target_width_value > 0 else 0
 
             # Ensure percentages are within reasonable bounds
             height_match = max(0, min(100, height_match))
@@ -688,14 +734,14 @@ elif page == "Next Experiment":
             match_col1, match_col2 = st.columns(2)
             with match_col1:
                 st.metric("Height Match", f"{height_match:.1f}%")
-                st.text(f"Target Total Height: {expected_total_height:.2f} mm")
-                st.text(f"({next_point['slicer_layer_height']:.2f} mm × {next_point['layer_count']} layers)")
+                st.text(f"Target Total Height: {target_total_height:.2f} mm")
+                st.text(f"({target_height_per_layer:.2f} mm × {next_point['layer_count']} layers)")
                 st.text(f"Predicted: {next_point['predicted_height']:.2f} mm")
                 st.progress(height_match / 100)
 
             with match_col2:
                 st.metric("Width Match", f"{width_match:.1f}%")
-                st.text(f"Target Width: {expected_width:.2f} mm")
+                st.text(f"Target Width: {target_width_value:.2f} mm")
                 st.text(f"Predicted: {next_point['predicted_width']:.2f} mm")
                 st.progress(width_match / 100)
 
@@ -709,8 +755,7 @@ elif page == "Next Experiment":
                 store_suggestion_params_for_form(suggestion_id)
                 st.rerun()
 
-        elif suggestion_type == "Design Space Exploration (multiple points)" and hasattr(st.session_state,
-                                                                                         'next_experiment_points'):
+        elif suggestion_type.startswith("Design Space Exploration") and hasattr(st.session_state, 'next_experiment_points'):
             st.subheader("Suggested Experiments")
 
             # Create tabs for each suggestion
@@ -996,42 +1041,6 @@ elif page == "Optimization History":
         # Display the summary table
         st.dataframe(grouped)
         
-        # Visualization of how total_mismatch improves with dataset size
-        st.subheader("Optimization Progress")
-        
-        import plotly.express as px
-        
-        # Create scatter plot of total mismatch vs dataset size
-        fig1 = px.scatter(
-            suggested_df, 
-            x='dataset_size', 
-            y='total_mismatch', 
-            color='suggestion_type',
-            title='Dimension Mismatch vs Dataset Size',
-            labels={
-                'total_mismatch': 'Total Dimension Mismatch (mm)',
-                'dataset_size': 'Dataset Size',
-                'suggestion_type': 'Suggestion Type'
-            },
-            opacity=0.7
-        )
-        
-        fig1.update_traces(marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey')))
-        st.plotly_chart(fig1, use_container_width=True)
-        
-        # Create box plot to compare the two suggestion types
-        fig2 = px.box(
-            suggested_df, 
-            x='suggestion_type', 
-            y='total_mismatch',
-            title='Mismatch Distribution by Suggestion Type',
-            labels={
-                'total_mismatch': 'Total Dimension Mismatch (mm)',
-                'suggestion_type': 'Suggestion Type'
-            }
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-        
         # Display raw data with filters
         st.subheader("Suggested Experiments Data")
         
@@ -1082,6 +1091,9 @@ elif page == "Optimization History":
                             st.write(f"🔧 Type: {row['suggestion_type']}")
                             if pd.notna(row.get('timestamp')):
                                 st.write(f"⏰ {row['timestamp'][:16]}")
+                            # Display targets if available
+                            if pd.notna(row.get('target_height')) and pd.notna(row.get('target_width')):
+                                st.write(f"🎯 Targets: H={row['target_height']:.1f}mm, W={row['target_width']:.1f}mm")
                         
                         with info_col2:
                             st.write("**🌡️ Environment**")

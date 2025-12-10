@@ -8,10 +8,11 @@ from database import add_suggested_experiment
 
 
 def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_points=None, diversity_weight=0.0,
-                           store_suggestion=True, suggestion_type="single_point", include_uncertainty=None):
+                           store_suggestion=True, suggestion_type="single_point", include_uncertainty=None,
+                           target_height=None, target_width=None):
     """
     Suggest the next experiment point using Bayesian optimization to minimize
-    the difference between slicer dimensions and actual printed dimensions.
+    the difference between target dimensions and actual printed dimensions.
     
     NOTE: Now uses only 3 features (matching robocasting):
     - slicer_nozzle_speed
@@ -28,6 +29,8 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         store_suggestion: Whether to store the suggestion in database
         suggestion_type: Type of suggestion for database tracking
         include_uncertainty: Whether to include uncertainty penalty (None = auto-decide based on suggestion_type)
+        target_height: Target height in mm (e.g., 1.2mm for 80% of 1.5mm slicer height)
+        target_width: Target width in mm (e.g., 2.0mm to match slicer width)
 
     Returns:
         Dictionary containing the suggested parameters for the next experiment
@@ -140,13 +143,19 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         X_raw = np.array([[slicer_nozzle_speed, slicer_extrusion_multiplier, layer_count]])
         X = scaler.transform(X_raw)
         
-        # Use default layer_height and layer_width for calculating expected dimensions
-        slicer_layer_height = default_layer_height
-        slicer_layer_width = default_layer_width
+        # Use target values directly (user-specified)
+        # If not provided, calculate from default slicer settings
+        if target_height is not None:
+            expected_total_height = target_height * layer_count
+        else:
+            # Fallback: use default layer height
+            expected_total_height = default_layer_height * layer_count
         
-        # Calculate expected total dimensions
-        expected_total_height = slicer_layer_height * layer_count  # Height accumulates with layers
-        expected_width = slicer_layer_width  # Width doesn't change with layer count
+        if target_width is not None:
+            expected_width = target_width
+        else:
+            # Fallback: use default layer width
+            expected_width = default_layer_width
 
         # Get predictions
         width_pred, width_std = width_model.predict(X, return_std=True)
@@ -157,8 +166,10 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         width_diff = abs(width_pred[0] - expected_width)
 
         # Combined error metric (sum of absolute differences)
-        # Simple additive - treats both dimensions equally
-        combined_error = height_diff + width_diff
+        # Weight height more heavily since it seems harder to optimize
+        height_weight = 1.5  # Increase if height is more important
+        width_weight = 1.0
+        combined_error = height_weight * height_diff + width_weight * width_diff
 
         # Include uncertainty component only if specified
         uncertainty_penalty = 0.0
@@ -180,14 +191,34 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         # Return the objective to minimize (lower is better)
         return total_objective
 
-    # Run the optimization
-    result = gp_minimize(
-        dimension_mismatch_objective,
-        space,
-        n_calls=n_calls,
-        random_state=42,
-        verbose=False
-    )
+    # Run the optimization with multiple random starts to avoid local minima
+    print("\n=== Starting Bayesian Optimization with Multiple Restarts ===")
+    print(f"Running {3} independent optimizations to find global minimum...\n")
+    
+    best_overall_result = None
+    best_overall_objective = float('inf')
+    
+    for restart in range(3):
+        print(f"\n--- Restart {restart + 1}/3 ---")
+        iteration_count[0] = 0  # Reset counter
+        
+        result = gp_minimize(
+            dimension_mismatch_objective,
+            space,
+            n_calls=n_calls // 3,  # Divide calls among restarts
+            random_state=42 + restart,  # Different random seed each time
+            verbose=False
+        )
+        
+        if result.fun < best_overall_objective:
+            best_overall_objective = result.fun
+            best_overall_result = result
+            print(f"✓ New best objective: {result.fun:.6f}")
+        else:
+            print(f"  Objective: {result.fun:.6f} (not better than {best_overall_objective:.6f})")
+    
+    result = best_overall_result
+    print(f"\n=== Best solution across all restarts: objective={result.fun:.6f} ===")
 
     # Extract the best point - params are [slicer_nozzle_speed, slicer_extrusion_multiplier, layer_count]
     suggested_point = {
@@ -212,9 +243,18 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
     width_pred, width_std = width_model.predict(X, return_std=True)
     height_pred, height_std = height_model.predict(X, return_std=True)
 
-    # Calculate the dimension mismatches using correct total dimensions
-    expected_total_height = suggested_point['slicer_layer_height'] * suggested_point['layer_count']
-    expected_width = suggested_point['slicer_layer_width']
+    # Calculate the dimension mismatches using target values (not slicer values)
+    if target_height is not None:
+        expected_total_height = target_height * suggested_point['layer_count']
+    else:
+        # Fallback: use slicer layer height
+        expected_total_height = suggested_point['slicer_layer_height'] * suggested_point['layer_count']
+    
+    if target_width is not None:
+        expected_width = target_width
+    else:
+        # Fallback: use slicer layer width
+        expected_width = suggested_point['slicer_layer_width']
     
     height_mismatch = abs(height_pred[0] - expected_total_height)
     width_mismatch = abs(width_pred[0] - expected_width)
@@ -228,7 +268,10 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
         'height_uncertainty': float(height_std[0] * 1.96),  # 95% CI
         'height_mismatch': float(height_mismatch),
         'width_mismatch': float(width_mismatch),
-        'total_mismatch': float(total_mismatch)
+        'total_mismatch': float(total_mismatch),
+        # Store target values for database tracking
+        'target_height': target_height,
+        'target_width': target_width,
     })
     
     # Store suggestion in the database with dataset size if requested
@@ -239,10 +282,11 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
     return suggested_point
 
 
-def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_calls=30):
+def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_calls=60,
+                                    target_height=None, target_width=None):
     """
     Suggest multiple points to explore the design space using Bayesian optimization
-    to minimize dimensional errors between slicer settings and print outcomes.
+    to minimize dimensional errors between target dimensions and print outcomes.
 
     Args:
         data: DataFrame containing the existing experiment data
@@ -250,6 +294,8 @@ def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_ca
         bounds: Dictionary of parameter bounds for optimization
         n_points: Number of points to suggest
         n_calls: Number of iterations for each optimization
+        target_height: Target height in mm (e.g., 1.2mm)
+        target_width: Target width in mm (e.g., 2.0mm)
 
     Returns:
         List of dictionaries containing suggested parameters
@@ -289,7 +335,9 @@ def suggest_design_space_exploration(data, models, bounds=None, n_points=5, n_ca
             diversity_weight=diversity_weight,
             store_suggestion=True,  # Store each point
             suggestion_type="design_space_exploration",  # Properly label them
-            include_uncertainty=True  # Keep uncertainty for exploration mode
+            include_uncertainty=True,  # Keep uncertainty for exploration mode
+            target_height=target_height,
+            target_width=target_width
         )
 
         suggested_points.append(next_point)

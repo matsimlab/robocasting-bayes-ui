@@ -111,6 +111,21 @@ def init_db():
         # Column already exists or other error - that's fine
         pass
     
+    # Add target columns to suggested_experiments if they don't exist
+    try:
+        c.execute('ALTER TABLE suggested_experiments ADD COLUMN target_height REAL')
+        conn.commit()
+        print("Added target_height column to suggested_experiments table")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute('ALTER TABLE suggested_experiments ADD COLUMN target_width REAL')
+        conn.commit()
+        print("Added target_width column to suggested_experiments table")
+    except sqlite3.OperationalError:
+        pass
+    
     # Create suggested_experiments table to track Bayesian optimization suggestions
     c.execute('''
     CREATE TABLE IF NOT EXISTS suggested_experiments (
@@ -424,8 +439,10 @@ def add_suggested_experiment(suggestion_data, dataset_size, suggestion_type="sin
         height_uncertainty,
         width_mismatch,
         height_mismatch,
-        total_mismatch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        total_mismatch,
+        target_height,
+        target_width
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         dataset_size,
         suggestion_type,
@@ -442,7 +459,9 @@ def add_suggested_experiment(suggestion_data, dataset_size, suggestion_type="sin
         suggestion_data.get('height_uncertainty', 0.0),
         suggestion_data['width_mismatch'],
         suggestion_data['height_mismatch'],
-        suggestion_data['total_mismatch']
+        suggestion_data['total_mismatch'],
+        suggestion_data.get('target_height', None),
+        suggestion_data.get('target_width', None)
     ))
     
     # Get the ID of the newly inserted row

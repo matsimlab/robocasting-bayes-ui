@@ -55,8 +55,8 @@ def validate_new_data_point(data_point):
             errors.append(f"{key.replace('_', ' ').title()} must be greater than zero")
 
     # Check for valid parameter ranges
-    if data_point['humidity'] < 0 or data_point['humidity'] > 1:
-        errors.append("Humidity must be between 0 and 1")
+    if data_point['humidity'] < 0 or data_point['humidity'] > 100:
+        errors.append("Humidity must be between 0 and 100")
 
     if data_point['temp'] <= 0:
         errors.append("Temperature must be greater than zero")
