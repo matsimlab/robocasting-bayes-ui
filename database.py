@@ -1,3 +1,34 @@
+"""SQLite Database Operations for Robocasting Experiments
+
+Manages two tables:
+1. experiments: Dimensional measurements (width/height) and process parameters
+   - Supports soft-delete via 'archived' flag to preserve data while excluding from training
+   - Tracks suggestion_id to link experiments back to Bayesian optimization suggestions
+   
+2. suggested_experiments: Bayesian optimization history
+   - Records all suggested parameter combinations
+   - Stores predictions, uncertainties, and dimension mismatches
+   - Tracks dataset size at time of suggestion for performance analysis
+
+Database Schema:
+    experiments:
+        id (PK), height_1/2/3, width_1/2/3, temp, humidity, layer_count,
+        slicer_layer_height, slicer_layer_width, slicer_nozzle_speed,
+        slicer_extrusion_multiplier, suggestion_id (FK), archived (0/1)
+    
+    suggested_experiments:
+        id (PK), dataset_size, suggestion_type, temp, humidity, layer_count,
+        slicer_*, predicted_width/height, uncertainties, mismatches,
+        target_height/width, timestamp
+
+Auto-initialization:
+    On first run, if cleaned_df.csv exists, data is automatically imported.
+    Database persists in data/robocasting.db (or /app/data/robocasting.db in Docker).
+
+Author: Nazarii Mediukh
+Institution: IPMS NASU
+"""
+
 import sqlite3
 import pandas as pd
 import os

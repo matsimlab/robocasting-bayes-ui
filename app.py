@@ -1,3 +1,28 @@
+"""Robocasting Bayesian Optimization Web Application
+
+Interactive Streamlit interface for GPR-based parameter optimization in robocasting/direct ink writing.
+Provides experiment management, prediction, and Bayesian optimization for dimensional accuracy
+in additive manufacturing of ceramic structures.
+
+Main Components:
+    - Data Explorer: View/archive experimental records with visualization
+    - Predictions: GPR predictions with 95% confidence intervals and CV metrics
+    - Next Experiment: Bayesian optimization for parameter selection (single point or design space)
+    - Add New Data: Manual data entry with validation and suggestion linking
+    - Optimization History: Track all suggestions and export history
+
+Methodology:
+    Uses fixed GPR models (RBF + WhiteKernel) to predict dimensional outcomes, then applies
+    Bayesian optimization to minimize mismatch between target and predicted dimensions.
+    Optimizes only 3 parameters (nozzle speed, extrusion multiplier, layer count) based on
+    feature importance analysis from companion ML study.
+
+Author: Nazarii Mediukh
+Institution: Institute for Problems of Materials Science, NASU
+License: MIT
+Related: https://doi.org/10.5281/zenodo.17782507
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np

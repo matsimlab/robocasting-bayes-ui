@@ -14,10 +14,15 @@ def suggest_next_experiment(data, models, bounds=None, n_calls=100, previous_poi
     Suggest the next experiment point using Bayesian optimization to minimize
     the difference between target dimensions and actual printed dimensions.
     
-    NOTE: Now uses only 3 features (matching robocasting):
-    - slicer_nozzle_speed
-    - slicer_extrusion_multiplier  
-    - layer_count
+    FEATURE SELECTION RATIONALE:
+    Only optimizes 3 parameters (matching robocasting ML study findings):
+    - slicer_nozzle_speed (3-22 mm/s) - Strongest predictor
+    - slicer_extrusion_multiplier (0.4-0.8) - Critical for deposition rate  
+    - layer_count (1-3) - Direct height accumulation
+
+    Environmental parameters (temp, humidity) and non-optimized slicer settings are held at
+    dataset mean values during optimization. This focuses search on parameters experimentalists
+    can easily control while maintaining prediction accuracy
 
     Args:
         data: DataFrame containing the existing experiment data

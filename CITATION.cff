@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Bayesian Optimization Tool for Robocasting Parameter Selection"
+authors:
+  - family-names: "Mediukh"
+    given-names: "Nazarii"
+    affiliation: "Institute for Problems of Materials Science, National Academy of Sciences of Ukraine"
+    email: "n.mediukh@ipms.kyiv.ua"
+  - family-names: "Naumenko"
+    given-names: "Vladyslav"
+    affiliation: "Institute for Problems of Materials Science, National Academy of Sciences of Ukraine"
+  - family-names: "Krasikov"
+    given-names: "Anton"
+    affiliation: "Institute for Problems of Materials Science, National Academy of Sciences of Ukraine"
+  - family-names: "Bilyi"
+    given-names: "Vladyslav"
+    affiliation: "Institute for Problems of Materials Science, National Academy of Sciences of Ukraine"
+  - family-names: "Vasiliev"
+    given-names: "Oleksandr"
+    affiliation: "Institute for Problems of Materials Science, National Academy of Sciences of Ukraine"
+  - family-names: "Zgalat-Lozynskyi"
+    given-names: "Ostap"
+    affiliation: "Institute for Problems of Materials Science, National Academy of Sciences of Ukraine"
+repository-code: "https://github.com/matsimlab/robocasting-bayes-ui"
+license: MIT
+keywords:
+  - bayesian optimization
+  - robocasting
+  - direct ink writing
+  - gaussian process regression
+  - additive manufacturing
+  - ceramic 3D printing
+  - streamlit
+  - web application
+  - machine learning
+  - experimental design
