@@ -1,6 +1,6 @@
 # Bayesian Optimization Tool for Robocasting Parameter Selection
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXX)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17886407.svg)](https://doi.org/10.5281/zenodo.17886407)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Interactive web application for optimizing robocasting (direct ink writing) experiments using Gaussian Process Regression and Bayesian optimization. This tool enables systematic parameter selection to minimize dimensional mismatch between target and printed structures.
